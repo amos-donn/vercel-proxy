@@ -101,7 +101,7 @@ This is the seam a D1-backed repository will replace. Components never write sto
 ### `GET /api/health`
 
 ```json
-{ "ok": true, "service": "mezze", "version": "0.4.4",
+{ "ok": true, "service": "mezze", "version": "0.4.5",
   "jev": true, "system2": false, "now": 1760000000000 }
 ```
 

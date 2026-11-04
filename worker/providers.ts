@@ -453,7 +453,7 @@ export async function health(env: Env, userId?: string): Promise<Record<string, 
   return {
     ok: true,
     service: 'mezze',
-    version: '0.4.4',
+    version: '0.4.5',
     authenticated: Boolean(userId),
     jev: configured('typesafe'),
     system2: providers.some((provider) => provider.kind === 'system2' && configured(provider.id)),
@@ -612,7 +612,9 @@ async function complete(
         body: JSON.stringify({
           ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
           contents: contents.length ? contents : [{ role: 'user', parts: [{ text: 'Continue.' }] }],
-          generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+          // JSON mode is not supported by every AI Studio model (Gemma, image
+          // models), so rely on the prompt and lenient parsing instead.
+          generationConfig: { temperature: 0.2 },
         }),
       },
     )
@@ -687,7 +689,13 @@ function parseStructured(text: string): { plan: string[]; prose: string; canvas?
   let prose = text.trim()
   let canvas: System2Canvas | undefined
   try {
-    const parsed = JSON.parse(text) as { plan?: unknown; prose?: unknown; canvas?: unknown }
+    const trimmed = text.trim()
+    const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
+    const parsed = JSON.parse(fenced ? fenced[1] : trimmed) as {
+      plan?: unknown
+      prose?: unknown
+      canvas?: unknown
+    }
     if (Array.isArray(parsed.plan)) {
       plan = parsed.plan.filter((step): step is string => typeof step === 'string').slice(0, 12)
     }
