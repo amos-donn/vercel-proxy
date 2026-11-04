@@ -17,7 +17,7 @@ Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP a
 | Template-only S1 | ● | Greetings/status/help can be answered without System 2. Anything composed escalates even if routing accepted a tool. |
 | System 2 planning | ● | Plan steps with done/active/pending/blocked state, visible in the chat and side panel. |
 | System 2 prose/artifacts | ● | Drafts, reports, transcript summaries and queue analyses. |
-| Live OpenRouter catalog | ● | Authenticated `/api/models` reads the account's OpenRouter catalog (cached 10 minutes); the System 2 picker searches every returned model with context and per-million pricing. |
+| Live model catalogs | ● | Authenticated `/api/models` reads OpenRouter, Google AI Studio (paginated) and Groq catalogs (cached 10 minutes), including user keys and Worker platform keys. The System 2 picker groups and searches every chat model with context and, for OpenRouter, pricing. |
 | Per-turn trace | ● | Route, model, latency, tokens, questions, decision, probabilities, confidence bar with threshold marker, escalation reason, S2 cost, savings vs always-S2. |
 | Live or simulated | ● | Simulated is local and key-free. Live runs System 1 → System 2 with a Jev key; without one it calls the selected System 2 model directly as a normal agent. |
 | Direct agent | ● | No System 1 key: every live turn skips typed routing and goes straight to System 2, with a distinct “Direct agent” trace. |
@@ -180,7 +180,7 @@ Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP a
 | S1 tuning | ● | Jev model, accept/escalate/risk thresholds, reset. |
 | S2 tuning | ● | Lane, effort, real workspace spend, savings, decision count and prompt tokens. |
 | Approval posture | ● | Auto / gate risky / ask first with explanations. |
-| Providers | ● | Five provider lanes with live key masks, model counts and source (yours or Worker secret). |
+| Providers | ● | Six provider lanes (including Groq) with live key masks, catalog counts and source (yours or Worker secret). |
 | Key handling | ● | Manage keys in Vault; values are encrypted before storage and never returned. |
 | Interface | ● | Compact density and reduced motion. |
 | Account | ● | Name, email, member since, session lifetime, sign out. |

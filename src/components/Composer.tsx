@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { useStore } from '../store'
+import { modelLabel } from '../data/providers'
 import type { Agent, McpServer, McpToolCall, Skill } from '../types'
 import { cn } from '../lib/format'
 import { coerceToolArgs, toolFields } from '../lib/mcp'
@@ -379,7 +380,7 @@ export function Composer({
             <Sparkles size={11} />
             <span className="mono">{agent?.name ?? 'Forge'}</span>
             <span className="faint">·</span>
-            <span className="mono">{settings.s2Model}</span>
+            <span className="mono">{modelLabel(settings.s2Model)}</span>
           </span>
 
           <div className="send-group" ref={scheduleRef}>

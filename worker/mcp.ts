@@ -184,7 +184,7 @@ async function initialize(url: string, auth?: string): Promise<{ sessionId?: str
         {
           protocolVersion: protocol,
           capabilities: { tools: {} },
-          clientInfo: { name: 'Mezze', version: '0.4.3' },
+          clientInfo: { name: 'Mezze', version: '0.4.4' },
         },
         1,
       )

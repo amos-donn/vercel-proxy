@@ -210,7 +210,7 @@ export function VaultPage() {
                   </button>
                 }
               >
-                Add a TypeSafe key for Jev and a System 2 key (Anthropic, OpenAI, Google or OpenRouter).
+                Add a TypeSafe key for Jev and a System 2 key (Anthropic, OpenAI, Google AI Studio, Groq or OpenRouter).
               </Empty>
             ) : null}
           </div>
@@ -325,7 +325,7 @@ export function VaultPage() {
         {error ? <p className="field-error">{error}</p> : null}
 
         <p className="tiny faint">
-          <ShieldCheck size={10} /> Anthropic, OpenAI, Google and OpenRouter keys are used by System 2.
+          <ShieldCheck size={10} /> Anthropic, OpenAI, Google AI Studio, Groq and OpenRouter keys are used by System 2.
           TypeSafe is used by Jev.
         </p>
       </Modal>

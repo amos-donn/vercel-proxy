@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store'
 import type { ApprovalPosture, ModelOption, View } from '../types'
-import { providerForModel } from '../data/providers'
+import { liveCatalogProviders, modelLabel, providerForModel } from '../data/providers'
 import { api } from '../lib/api'
 import { cn, money, tokens } from '../lib/format'
 import { Chip, Field, Meter, Segmented, Toggle } from '../components/ui'
@@ -51,12 +51,15 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
   const system2Ready = providers.some((provider) => provider.id !== 'typesafe' && provider.status === 'connected')
   const [health, setHealth] = useState<'idle' | 'checking' | 'ok' | 'down'>('idle')
   const [healthText, setHealthText] = useState('Not checked yet.')
-  const openRouterReady = providers.some(
-    (provider) => provider.id === 'openrouter' && provider.status === 'connected',
+  const catalogProviders = providers.filter(
+    (provider) =>
+      provider.status === 'connected' && liveCatalogProviders.some((id) => id === provider.id),
   )
-  const [catalog, setCatalog] = useState<ModelOption[]>([])
+  const catalogProviderIds = catalogProviders.map((provider) => provider.id)
+  const catalogKey = catalogProviderIds.join(',')
+  const [catalogs, setCatalogs] = useState<Record<string, ModelOption[]>>({})
+  const [catalogErrors, setCatalogErrors] = useState<Record<string, string>>({})
   const [catalogState, setCatalogState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
-  const [catalogError, setCatalogError] = useState('')
   const [modelQuery, setModelQuery] = useState('')
 
   const testRuntime = async () => {
@@ -77,37 +80,89 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
     }
   }
 
-  const loadCatalog = async () => {
-    setCatalogState('loading')
-    setCatalogError('')
-    try {
-      const body = await api.models('openrouter')
-      setCatalog(body.models)
-      setCatalogState('ready')
-    } catch (error) {
-      setCatalogState('error')
-      setCatalogError(error instanceof Error ? error.message : 'Could not load the OpenRouter catalog.')
+  const loadCatalogs = async () => {
+    if (!catalogProviderIds.length) {
+      setCatalogs({})
+      setCatalogErrors({})
+      setCatalogState('idle')
+      return
     }
+    setCatalogState('loading')
+    setCatalogErrors({})
+    const entries = await Promise.all(
+      catalogProviderIds.map(async (id) => {
+        try {
+          const body = await api.models(id)
+          return { id, models: body.models, error: '' }
+        } catch (error) {
+          return {
+            id,
+            models: [] as ModelOption[],
+            error: error instanceof Error ? error.message : `Could not load the ${id} catalog.`,
+          }
+        }
+      }),
+    )
+    const nextCatalogs: Record<string, ModelOption[]> = {}
+    const nextErrors: Record<string, string> = {}
+    for (const entry of entries) {
+      nextCatalogs[entry.id] = entry.models
+      if (entry.error) nextErrors[entry.id] = entry.error
+    }
+    setCatalogs(nextCatalogs)
+    setCatalogErrors(nextErrors)
+    setCatalogState(entries.every((entry) => entry.error) ? 'error' : 'ready')
   }
 
   useEffect(() => {
-    if (openRouterReady) void loadCatalog()
-  }, [openRouterReady])
+    void loadCatalogs()
+  }, [catalogKey])
 
   const query = modelQuery.trim().toLowerCase()
-  const catalogModels = catalog.filter(
-    (model) => !curatedModels.some((curated) => curated.id === model.id),
+  const catalogCount = Object.values(catalogs).reduce((total, models) => total + models.length, 0)
+  const loadedCount = (id: string) => catalogs[id]?.length ?? 0
+  const catalogErrorList = Object.entries(catalogErrors).map(
+    ([id, message]) => `${providers.find((provider) => provider.id === id)?.name ?? id}: ${message}`,
   )
-  const visibleCatalog = query
-    ? catalogModels.filter(
-        (model) =>
-          model.id.toLowerCase().includes(query) || model.name.toLowerCase().includes(query),
-      )
-    : catalogModels
-  const selectedCatalogModel = catalog.find((model) => model.id === settings.s2Model)
-  if (selectedCatalogModel && !visibleCatalog.some((model) => model.id === selectedCatalogModel.id)) {
-    visibleCatalog.unshift(selectedCatalogModel)
-  }
+  const catalogNames = catalogProviderIds
+    .filter((id) => catalogs[id]?.length)
+    .map(
+      (id) =>
+        `${providers.find((provider) => provider.id === id)?.name ?? id} ${catalogs[id].length}`,
+    )
+  const curatedIds = new Set(curatedModels.map((model) => model.id))
+  const selectedEntry = catalogProviderIds
+    .flatMap((provider) => (catalogs[provider] ?? []).map((model) => ({ provider, model })))
+    .find((entry) => entry.model.id === settings.s2Model)
+  const selectedCatalogModel = selectedEntry?.model
+  const visibleGroups = catalogProviderIds
+    .map((provider) => {
+      const all = catalogs[provider] ?? []
+      const models = all.filter((model) => {
+        const raw = modelLabel(model.id)
+        if (curatedIds.has(model.id) || curatedIds.has(raw)) return false
+        if (!query) return true
+        return (
+          model.id.toLowerCase().includes(query) ||
+          model.name.toLowerCase().includes(query) ||
+          raw.toLowerCase().includes(query)
+        )
+      })
+      if (
+        selectedEntry &&
+        selectedEntry.provider === provider &&
+        !models.some((model) => model.id === selectedEntry.model.id)
+      ) {
+        models.unshift(selectedEntry.model)
+      }
+      return {
+        provider,
+        name: providers.find((item) => item.id === provider)?.name ?? provider,
+        total: all.length,
+        models,
+      }
+    })
+    .filter((group) => group.models.length > 0)
   const selectedProvider = providerForModel(settings.s2Model)
   const selectedProviderName =
     providers.find((provider) => provider.id === selectedProvider)?.name ?? selectedProvider
@@ -240,29 +295,34 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
                     <option key={model.id} value={model.id}>{model.label}</option>
                   ))}
                 </optgroup>
-                {visibleCatalog.length ? (
-                  <optgroup label={`OpenRouter · ${catalog.length} models`}>
-                    {visibleCatalog.map((model) => (
+                {!curatedModels.some((model) => model.id === settings.s2Model) && !selectedCatalogModel ? (
+                  <option value={settings.s2Model}>{modelLabel(settings.s2Model)} — saved</option>
+                ) : null}
+                {visibleGroups.map((group) => (
+                  <optgroup key={group.provider} label={`${group.name} · ${group.total} models`}>
+                    {group.models.map((model) => (
                       <option key={model.id} value={model.id}>
-                        {model.name === model.id ? model.id : `${model.name} — ${model.id}`}
+                        {model.name === modelLabel(model.id)
+                          ? model.name
+                          : `${model.name} — ${modelLabel(model.id)}`}
                       </option>
                     ))}
                   </optgroup>
-                ) : null}
+                ))}
               </select>
-              {openRouterReady ? (
+              {catalogProviderIds.length ? (
                 <div className="model-catalog">
                   <input
                     className="input"
-                    placeholder={catalog.length ? `Filter ${catalog.length} models…` : 'Filter OpenRouter models…'}
+                    placeholder={catalogCount ? `Filter ${catalogCount} models…` : 'Filter live model catalogs…'}
                     value={modelQuery}
                     onChange={(event) => setModelQuery(event.target.value)}
-                    aria-label="Filter OpenRouter models"
+                    aria-label="Filter live model catalogs"
                   />
                   <button
                     type="button"
                     className="btn btn-sm"
-                    onClick={() => void loadCatalog()}
+                    onClick={() => void loadCatalogs()}
                     disabled={catalogState === 'loading'}
                   >
                     {catalogState === 'loading' ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />}
@@ -270,13 +330,14 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
                   </button>
                 </div>
               ) : null}
-              {catalogState === 'error' ? (
-                <div className="inline-warn">
-                  <ShieldAlert size={12} /> {catalogError}
+              {catalogErrorList.map((message) => (
+                <div className="inline-warn" key={message}>
+                  <ShieldAlert size={12} /> {message}
                 </div>
-              ) : catalogState === 'ready' ? (
+              ))}
+              {catalogState === 'ready' && catalogCount ? (
                 <p className="tiny faint">
-                  {catalog.length} models loaded from OpenRouter. Search by name or id.
+                  {catalogCount} models loaded · {catalogNames.join(' · ')}. Search by name or id.
                 </p>
               ) : null}
               {selectedCatalogModel ? (
@@ -364,7 +425,11 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
                   <span className="tiny faint">{provider.note}</span>
                 </div>
                 <span className="provider-models mono tiny">
-                  {provider.id === 'openrouter' && catalog.length ? catalog.length : provider.models} models
+                  {loadedCount(provider.id)
+                    ? `${loadedCount(provider.id)} loaded`
+                    : liveCatalogProviders.some((id) => id === provider.id)
+                      ? 'live catalog'
+                      : `${provider.models} models`}
                 </span>
                 <span className="provider-key mono tiny">{provider.keyMask ?? 'no key'}</span>
                 {provider.status === 'connected' ? (
@@ -482,7 +547,7 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
       </div>
 
       <footer className="settings-foot">
-        <span className="mono">Mezze v0.4.3</span>
+        <span className="mono">Mezze v0.4.4</span>
         <span>Built for Cloudflare Workers · React 19 · Jev {settings.jevModel}</span>
         <span className="grow" />
         <span>D1 workspace · encrypted BYOK · MCP</span>

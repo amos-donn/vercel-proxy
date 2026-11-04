@@ -7,7 +7,7 @@
  *   /api/keys        encrypted BYOK provider keys + audit trail
  *   /api/mcp         connected MCP servers, tool discovery and tool calls
  *   /api/health      which lanes are configured (booleans only)
- *   /api/models      the live OpenRouter model catalog for the account
+ *   /api/models      live catalogs for OpenRouter, Google AI Studio and Groq
  *   /api/jev         System 1 proxy
  *   /api/system2     System 2 proxy
  *

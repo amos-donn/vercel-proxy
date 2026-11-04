@@ -13,6 +13,7 @@ import {
 } from './jev'
 import { planSteps, simulateSystem2 } from './system2'
 import { simulateCanvas, wantsCanvas } from './canvas'
+import { modelLabel } from '../data/providers'
 import type { CanvasDraft } from '../types'
 
 export interface TurnTool {
@@ -145,7 +146,7 @@ function simulatedTurn(input: TurnInput): TurnResult {
           threshold: signal.threshold,
           signal: signal.signal,
           s2: {
-            model: input.s2Model,
+            model: modelLabel(input.s2Model),
             latencyMs: decision === 'write_file' ? 4_180 : 3_240,
             costUsd: decision === 'write_file' ? 0.041 : 0.028,
             plan: planFor(input.goal).map((step) => step.label),
@@ -177,7 +178,7 @@ function simulatedTurn(input: TurnInput): TurnResult {
       reason: 'System 1 selected a tool, but the reply needs composed prose',
       threshold: 0.1,
       signal: 0.83,
-      s2: { model: input.s2Model, latencyMs: 3_180, costUsd: 0.031, plan: planFor(input.goal).map((step) => step.label) },
+      s2: { model: modelLabel(input.s2Model), latencyMs: 3_180, costUsd: 0.031, plan: planFor(input.goal).map((step) => step.label) },
     }
     trace.savedUsd = trace.s1.costUsd + 0.031 - trace.baselineUsd
   }
@@ -193,7 +194,7 @@ function simulatedTurn(input: TurnInput): TurnResult {
       reason: signal.reason,
       threshold: signal.threshold,
       signal: signal.signal,
-      s2: { model: input.s2Model, latencyMs: s2.latencyMs, costUsd: s2.costUsd, plan: s2.plan.map((step) => step.label) },
+      s2: { model: modelLabel(input.s2Model), latencyMs: s2.latencyMs, costUsd: s2.costUsd, plan: s2.plan.map((step) => step.label) },
     }
     trace.escalation.s2.costUsd = s2.costUsd
     trace.escalation.s2.latencyMs = s2.latencyMs
@@ -388,7 +389,7 @@ async function directAgentTurn(
     usage?: { cost?: number }
   }
   const prose = body.prose?.trim() ?? ''
-  if (!prose) throw new Error(`${input.s2Model} returned an empty reply.`)
+  if (!prose) throw new Error(`${modelLabel(input.s2Model)} returned an empty reply.`)
 
   const latencyMs = Math.round(performance.now() - started)
   const costUsd = body.usage?.cost ?? 0.03
@@ -419,7 +420,7 @@ async function directAgentTurn(
       reason,
       threshold: 0,
       signal: 0,
-      s2: { model: input.s2Model, latencyMs, costUsd, plan: plan.map((step) => step.label) },
+      s2: { model: modelLabel(input.s2Model), latencyMs, costUsd, plan: plan.map((step) => step.label) },
     },
     baselineUsd: costUsd,
     savedUsd: 0,
@@ -432,7 +433,7 @@ async function directAgentTurn(
     assistant: { system: 's2', text: prose },
     canvas,
     live: true,
-    notice: `Direct agent · ${reason} · ${input.s2Model}`,
+    notice: `Direct agent · ${reason} · ${modelLabel(input.s2Model)}`,
   }
 }
 

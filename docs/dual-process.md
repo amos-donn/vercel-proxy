@@ -191,7 +191,7 @@ Edit in Settings; the changes are live and persist to D1. The defaults are in `s
 
 Settings → System 2 lane. The engine passes `s2Model` through to the trace and the live request; model IDs are strings, not enums, so a new lane requires no type change.
 
-With an OpenRouter key, Settings loads the live catalog from `/api/models` and the picker searches every model the key can see. Any `vendor/model` id routes to OpenRouter; native Claude, GPT and Gemini ids keep their direct providers.
+With an OpenRouter, Google AI Studio or Groq key (yours or a Worker platform secret), Settings loads that provider's live catalog from `/api/models` and the picker groups and searches every chat model it returns. OpenRouter keeps `vendor/model` ids. Google and Groq catalog ids are qualified as `google:…` and `groq:…` so Gemma, Llama, Qwen and other non-standard ids still route to the right provider. Native Claude, GPT and Gemini ids keep their direct providers.
 
 ---
 

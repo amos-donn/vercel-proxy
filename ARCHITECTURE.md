@@ -57,7 +57,7 @@ The UI consumes `TurnResult` in `src/pages/ChatView.tsx`: append trace, run tool
 
 ### Live path
 
-`liveTurn()` posts `buildStepRequest()` to `/api/jev`, reads typed answers, calls `/api/system2` only when the router escalates, and builds the same `DecisionTrace` shape. A missing route, non-JSON response, HTTP error or absent key falls back to simulation **per turn**, with a notice. The client never sees a provider key.
+`liveTurn()` posts `buildStepRequest()` to `/api/jev`, reads typed answers, calls `/api/system2` only when the router escalates, and builds the same `DecisionTrace` shape. A missing route, non-JSON response or HTTP error surfaces on the turn; an absent Jev key routes to the direct single-model agent. The client never sees a provider key.
 
 ## 3. Typed contracts
 
@@ -101,7 +101,7 @@ This is the seam a D1-backed repository will replace. Components never write sto
 ### `GET /api/health`
 
 ```json
-{ "ok": true, "service": "mezze", "version": "0.4.3",
+{ "ok": true, "service": "mezze", "version": "0.4.4",
   "jev": true, "system2": false, "now": 1760000000000 }
 ```
 

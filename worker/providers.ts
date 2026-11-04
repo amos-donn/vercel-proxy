@@ -2,7 +2,15 @@ import type { D1Database, Env } from './db'
 import { all, one, run } from './db'
 import { ApiError } from './errors'
 import { decryptSecret, encryptSecret, encryptionCustody, maskSecret } from './crypto'
-import { providerByKeyName, providerForModel, providers } from '../src/data/providers'
+import {
+  isLiveCatalogProvider,
+  liveCatalogProviders,
+  modelForProvider,
+  modelLabel,
+  providerByKeyName,
+  providerForModel,
+  providers,
+} from '../src/data/providers'
 import type { ProviderId } from '../src/data/providers'
 import type { ModelCatalog, ModelOption } from '../src/types'
 
@@ -149,20 +157,50 @@ async function getKey(env: Env, userId: string, provider: ProviderId): Promise<s
 }
 
 const MODEL_CATALOG_TTL_MS = 10 * 60 * 1000
-let modelCatalogCache: { at: number; catalog: ModelCatalog } | null = null
+const modelCatalogCache = new Map<string, { at: number; catalog: ModelCatalog }>()
+const CATALOG_LABELS = {
+  openrouter: 'OpenRouter',
+  google: 'Google AI Studio',
+  groq: 'Groq',
+} as const
 
-/** Public OpenRouter metadata, normalized for the Settings picker. */
+/** Live provider metadata for the Settings picker. Platform keys work through getKey. */
 export async function listModels(env: Env, userId: string, provider: string): Promise<ModelCatalog> {
-  if (provider !== 'openrouter') {
-    throw new ApiError(400, 'unsupported_provider', 'Only the OpenRouter catalog is loaded live right now.')
+  if (!isLiveCatalogProvider(provider)) {
+    const supported = liveCatalogProviders
+      .map((id) => providers.find((item) => item.id === id)?.name ?? id)
+      .join(', ')
+    throw new ApiError(400, 'unsupported_provider', `Live catalogs are available for ${supported}.`)
   }
-  const key = await getKey(env, userId, 'openrouter')
+  const key = await getKey(env, userId, provider)
   if (!key) {
-    throw new ApiError(503, 'provider_not_configured', 'Add an OpenRouter key to load its model catalog.', 'openrouter')
+    const definition = providers.find((item) => item.id === provider)
+    throw new ApiError(
+      503,
+      'provider_not_configured',
+      `Add a ${definition?.name ?? provider} key to load its model catalog.`,
+      provider,
+    )
   }
-  if (modelCatalogCache && Date.now() - modelCatalogCache.at < MODEL_CATALOG_TTL_MS) {
-    return modelCatalogCache.catalog
+  const cacheKey = `${provider}:${userId}`
+  const cached = modelCatalogCache.get(cacheKey)
+  if (cached && Date.now() - cached.at < MODEL_CATALOG_TTL_MS) return cached.catalog
+
+  const models =
+    provider === 'openrouter'
+      ? await openRouterCatalog(key)
+      : provider === 'google'
+        ? await googleCatalog(key)
+        : await groqCatalog(env, key)
+  if (!models.length) {
+    throw new ApiError(502, 'models_empty', `${CATALOG_LABELS[provider]} returned no usable chat models.`)
   }
+  const catalog: ModelCatalog = { provider, models, fetchedAt: Date.now() }
+  modelCatalogCache.set(cacheKey, { at: Date.now(), catalog })
+  return catalog
+}
+
+async function openRouterCatalog(key: string): Promise<ModelOption[]> {
   const response = await fetch('https://openrouter.ai/api/v1/models', {
     headers: {
       accept: 'application/json',
@@ -172,11 +210,111 @@ export async function listModels(env: Env, userId: string, provider: string): Pr
     },
   })
   if (!response.ok) throw upstreamError('OpenRouter', response.status, await response.text())
-  const models = normalizeOpenRouterModels(await response.json())
-  if (!models.length) throw new ApiError(502, 'models_empty', 'OpenRouter returned no models.')
-  const catalog: ModelCatalog = { provider: 'openrouter', models, fetchedAt: Date.now() }
-  modelCatalogCache = { at: Date.now(), catalog }
-  return catalog
+  return normalizeOpenRouterModels(await response.json())
+}
+
+async function googleCatalog(key: string): Promise<ModelOption[]> {
+  const rows: unknown[] = []
+  let pageToken = ''
+  for (let page = 0; page < 5; page += 1) {
+    const requestUrl = new URL('https://generativelanguage.googleapis.com/v1beta/models')
+    requestUrl.searchParams.set('pageSize', '1000')
+    if (pageToken) requestUrl.searchParams.set('pageToken', pageToken)
+    const response = await fetch(requestUrl.toString(), {
+      headers: { accept: 'application/json', 'x-goog-api-key': key },
+    })
+    if (!response.ok) throw upstreamError('Google AI Studio', response.status, await response.text())
+    const payload = (await response.json()) as { models?: unknown; nextPageToken?: unknown }
+    if (Array.isArray(payload.models)) rows.push(...payload.models)
+    pageToken = typeof payload.nextPageToken === 'string' ? payload.nextPageToken : ''
+    if (!pageToken) break
+  }
+  return normalizeGoogleModels({ models: rows })
+}
+
+async function groqCatalog(env: Env, key: string): Promise<ModelOption[]> {
+  const base = (
+    typeof env.GROQ_BASE_URL === 'string' && env.GROQ_BASE_URL.trim()
+      ? env.GROQ_BASE_URL
+      : 'https://api.groq.com/openai/v1'
+  ).replace(/\/$/, '')
+  const response = await fetch(`${base}/models`, {
+    headers: {
+      accept: 'application/json',
+      authorization: `Bearer ${key}`,
+    },
+  })
+  if (!response.ok) throw upstreamError('Groq', response.status, await response.text())
+  return normalizeGroqModels(await response.json())
+}
+
+export function normalizeGoogleModels(payload: unknown): ModelOption[] {
+  const rows =
+    payload && typeof payload === 'object' && Array.isArray((payload as { models?: unknown }).models)
+      ? (payload as { models: unknown[] }).models
+      : []
+  const seen = new Set<string>()
+  const models: ModelOption[] = []
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as Record<string, unknown>
+    const name = typeof row.name === 'string' ? row.name.trim() : ''
+    if (!name) continue
+    const withoutPrefix = name.startsWith('models/') ? name.slice(7) : name
+    const rawId = withoutPrefix.startsWith('google:') ? withoutPrefix.slice(7) : withoutPrefix
+    if (!rawId || rawId.length > 150) continue
+    const methods = Array.isArray(row.supportedGenerationMethods)
+      ? row.supportedGenerationMethods.filter((item): item is string => typeof item === 'string')
+      : []
+    if (!methods.includes('generateContent')) continue
+    const id = `google:${rawId}`
+    if (seen.has(id)) continue
+    seen.add(id)
+    const label =
+      typeof row.displayName === 'string' && row.displayName.trim()
+        ? row.displayName.trim().slice(0, 140)
+        : rawId
+    const context = Number(row.inputTokenLimit)
+    models.push({
+      id,
+      name: label,
+      context: Number.isFinite(context) && context > 0 ? context : 0,
+    })
+  }
+  return models.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+}
+
+export function normalizeGroqModels(payload: unknown): ModelOption[] {
+  const rows =
+    payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown }).data)
+      ? (payload as { data: unknown[] }).data
+      : []
+  const seen = new Set<string>()
+  const models: ModelOption[] = []
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as Record<string, unknown>
+    const name = typeof row.id === 'string' ? row.id.trim() : ''
+    if (!name || name.length > 150 || row.active === false) continue
+    if (/(whisper|tts|playai)/i.test(name)) continue
+    const rawId = name.startsWith('groq:') ? name.slice(5) : name
+    const id = `groq:${rawId}`
+    if (seen.has(id)) continue
+    seen.add(id)
+    const label =
+      typeof row.display_name === 'string' && row.display_name.trim()
+        ? row.display_name.trim().slice(0, 140)
+        : typeof row.name === 'string' && row.name.trim()
+          ? row.name.trim().slice(0, 140)
+          : rawId
+    const context = Number(row.context_window ?? row.context_length ?? row.max_context_window)
+    models.push({
+      id,
+      name: label,
+      context: Number.isFinite(context) && context > 0 ? context : 0,
+    })
+  }
+  return models.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
 }
 
 export function normalizeOpenRouterModels(payload: unknown): ModelOption[] {
@@ -315,7 +453,7 @@ export async function health(env: Env, userId?: string): Promise<Record<string, 
   return {
     ok: true,
     service: 'mezze',
-    version: '0.4.3',
+    version: '0.4.4',
     authenticated: Boolean(userId),
     jev: configured('typesafe'),
     system2: providers.some((provider) => provider.kind === 'system2' && configured(provider.id)),
@@ -370,18 +508,19 @@ export interface System2Result {
 export async function system2(env: Env, userId: string, body: Record<string, unknown>): Promise<System2Result> {
   const model =
     typeof body.model === 'string' && body.model.trim()
-      ? body.model.trim().slice(0, 120)
+      ? body.model.trim().slice(0, 160)
       : typeof env.SYSTEM2_MODEL === 'string'
         ? env.SYSTEM2_MODEL
         : S2_DEFAULT
   const provider = providerForModel(model)
+  const selectedModel = modelLabel(model)
   const key = await getKey(env, userId, provider)
   if (!key) {
     const definition = providers.find((item) => item.id === provider)
     throw new ApiError(
       503,
       'provider_not_configured',
-      `Add a ${definition?.name ?? provider} key to use ${model}.`,
+      `Add a ${definition?.name ?? provider} key to use ${selectedModel}.`,
       provider,
     )
   }
@@ -408,7 +547,7 @@ export async function system2(env: Env, userId: string, body: Record<string, unk
   const parsed = parseStructured(completion.text)
   return {
     ...parsed,
-    model,
+    model: selectedModel,
     provider,
     usage: {
       promptTokens: completion.promptTokens,
@@ -425,6 +564,7 @@ async function complete(
   model: string,
   messages: Array<{ role: string; content: string }>,
 ): Promise<{ text: string; promptTokens: number; completionTokens: number }> {
+  const apiModel = modelForProvider(provider, model)
   if (provider === 'anthropic') {
     const system = messages.filter((message) => message.role === 'system').map((message) => message.content).join('\n\n')
     const conversation = messages
@@ -438,7 +578,7 @@ async function complete(
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model,
+        model: apiModel,
         max_tokens: 4096,
         temperature: 0.2,
         ...(system ? { system } : {}),
@@ -465,7 +605,7 @@ async function complete(
       .filter((message) => message.role !== 'system')
       .map((message) => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }] }))
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(apiModel)}:generateContent?key=${encodeURIComponent(key)}`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -490,13 +630,18 @@ async function complete(
     }
   }
 
-  const base = provider === 'openrouter'
-    ? 'https://openrouter.ai/api/v1'
-    : (typeof env.OPENAI_BASE_URL === 'string'
-        ? env.OPENAI_BASE_URL
-        : typeof env.SYSTEM2_BASE_URL === 'string'
-          ? env.SYSTEM2_BASE_URL
-          : 'https://api.openai.com/v1').replace(/\/$/, '')
+  const base =
+    provider === 'openrouter'
+      ? 'https://openrouter.ai/api/v1'
+      : provider === 'groq'
+        ? (typeof env.GROQ_BASE_URL === 'string' && env.GROQ_BASE_URL.trim()
+            ? env.GROQ_BASE_URL
+            : 'https://api.groq.com/openai/v1').replace(/\/$/, '')
+        : (typeof env.OPENAI_BASE_URL === 'string'
+            ? env.OPENAI_BASE_URL
+            : typeof env.SYSTEM2_BASE_URL === 'string'
+              ? env.SYSTEM2_BASE_URL
+              : 'https://api.openai.com/v1').replace(/\/$/, '')
   const response = await fetch(`${base}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -507,14 +652,15 @@ async function complete(
         : {}),
     },
     body: JSON.stringify({
-      model,
+      model: apiModel,
       messages,
       temperature: 0.2,
       ...(provider === 'openai' ? { response_format: { type: 'json_object' } } : {}),
     }),
   })
   if (!response.ok) {
-    throw upstreamError(provider === 'openrouter' ? 'OpenRouter' : 'OpenAI', response.status, await response.text())
+    const upstream = provider === 'openrouter' ? 'OpenRouter' : provider === 'groq' ? 'Groq' : 'OpenAI'
+    throw upstreamError(upstream, response.status, await response.text())
   }
   const payload = (await response.json()) as {
     choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }>

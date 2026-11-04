@@ -28,6 +28,8 @@ export type Env = {
   OPENAI_BASE_URL?: string
   GEMINI_API_KEY?: string
   GOOGLE_API_KEY?: string
+  GROQ_API_KEY?: string
+  GROQ_BASE_URL?: string
   OPENROUTER_API_KEY?: string
   SYSTEM2_API_KEY?: string
   SYSTEM2_BASE_URL?: string

@@ -25,6 +25,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { useStore } from '../store'
+import { modelLabel } from '../data/providers'
 import type { Chat, ChatMessage, FileDiff, McpToolCall, PlanStep, Skill, View } from '../types'
 import { cn, money, sleep, splitWords, uid } from '../lib/format'
 import { executeTurn, type TurnEvidence } from '../engine/runtime'
@@ -398,7 +399,7 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
           </div>
           <div className="chat-meta">
             <span className="mono">{agent?.name ?? 'Forge'}</span>
-            <span className="mono">{store.settings.s2Model}</span>
+            <span className="mono">{modelLabel(store.settings.s2Model)}</span>
             <span className="mono">jev · {store.settings.jevModel}</span>
             {(chat.skillIds ?? []).length ? (
               <span className="mono">{chat.skillIds?.length} skills</span>
@@ -570,7 +571,7 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
                 <section className="side-section">
                   <h3>System 2</h3>
                   <div className="stat-rows">
-                    <div><span>Model</span><span className="mono">{store.settings.s2Model}</span></div>
+                    <div><span>Model</span><span className="mono">{modelLabel(store.settings.s2Model)}</span></div>
                     <div><span>Effort</span><span className="mono">{store.settings.effort}</span></div>
                     <div><span>Posture</span><span className="mono">{store.settings.posture}</span></div>
                   </div>
