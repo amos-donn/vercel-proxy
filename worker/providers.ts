@@ -4,6 +4,7 @@ import { ApiError } from './errors'
 import { decryptSecret, encryptSecret, encryptionCustody, maskSecret } from './crypto'
 import { providerByKeyName, providerForModel, providers } from '../src/data/providers'
 import type { ProviderId } from '../src/data/providers'
+import type { ModelCatalog, ModelOption } from '../src/types'
 
 interface ApiKeyRow {
   id: string
@@ -147,6 +148,76 @@ async function getKey(env: Env, userId: string, provider: ProviderId): Promise<s
   return envValue(env, definition.envNames) ?? null
 }
 
+const MODEL_CATALOG_TTL_MS = 10 * 60 * 1000
+let modelCatalogCache: { at: number; catalog: ModelCatalog } | null = null
+
+/** Public OpenRouter metadata, normalized for the Settings picker. */
+export async function listModels(env: Env, userId: string, provider: string): Promise<ModelCatalog> {
+  if (provider !== 'openrouter') {
+    throw new ApiError(400, 'unsupported_provider', 'Only the OpenRouter catalog is loaded live right now.')
+  }
+  const key = await getKey(env, userId, 'openrouter')
+  if (!key) {
+    throw new ApiError(503, 'provider_not_configured', 'Add an OpenRouter key to load its model catalog.', 'openrouter')
+  }
+  if (modelCatalogCache && Date.now() - modelCatalogCache.at < MODEL_CATALOG_TTL_MS) {
+    return modelCatalogCache.catalog
+  }
+  const response = await fetch('https://openrouter.ai/api/v1/models', {
+    headers: {
+      accept: 'application/json',
+      authorization: `Bearer ${key}`,
+      'HTTP-Referer': 'https://sosystem.amos-donn.workers.dev',
+      'X-Title': 'Mezze',
+    },
+  })
+  if (!response.ok) throw upstreamError('OpenRouter', response.status, await response.text())
+  const models = normalizeOpenRouterModels(await response.json())
+  if (!models.length) throw new ApiError(502, 'models_empty', 'OpenRouter returned no models.')
+  const catalog: ModelCatalog = { provider: 'openrouter', models, fetchedAt: Date.now() }
+  modelCatalogCache = { at: Date.now(), catalog }
+  return catalog
+}
+
+export function normalizeOpenRouterModels(payload: unknown): ModelOption[] {
+  const data =
+    payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown }).data)
+      ? ((payload as { data: unknown[] }).data)
+      : []
+  const seen = new Set<string>()
+  const models: ModelOption[] = []
+  for (const raw of data) {
+    if (!raw || typeof raw !== 'object') continue
+    const row = raw as Record<string, unknown>
+    const id = typeof row.id === 'string' ? row.id.trim() : ''
+    if (!id || id.length > 160 || seen.has(id)) continue
+    seen.add(id)
+    const name =
+      typeof row.name === 'string' && row.name.trim() ? row.name.trim().slice(0, 140) : id
+    const context = Number(row.context_length)
+    const pricing =
+      row.pricing && typeof row.pricing === 'object'
+        ? (row.pricing as Record<string, unknown>)
+        : {}
+    const promptPerMillion = perMillion(pricing.prompt)
+    const completionPerMillion = perMillion(pricing.completion)
+    models.push({
+      id,
+      name,
+      ...(Number.isFinite(context) && context > 0 ? { context } : { context: 0 }),
+      ...(promptPerMillion !== undefined ? { promptPerMillion } : {}),
+      ...(completionPerMillion !== undefined ? { completionPerMillion } : {}),
+    })
+  }
+  return models.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+}
+
+function perMillion(value: unknown): number | undefined {
+  const amount = typeof value === 'string' ? Number(value) : typeof value === 'number' ? value : NaN
+  if (!Number.isFinite(amount) || amount < 0) return undefined
+  return Number((amount * 1_000_000).toFixed(3))
+}
+
 export async function setUserKey(
   env: Env,
   userId: string,
@@ -244,7 +315,7 @@ export async function health(env: Env, userId?: string): Promise<Record<string, 
   return {
     ok: true,
     service: 'mezze',
-    version: '0.4.2',
+    version: '0.4.3',
     authenticated: Boolean(userId),
     jev: configured('typesafe'),
     system2: providers.some((provider) => provider.kind === 'system2' && configured(provider.id)),

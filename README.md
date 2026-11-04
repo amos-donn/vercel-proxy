@@ -38,7 +38,7 @@ Create an account on first load; the workspace is empty apart from starter memor
 | **Integrations** | Real MCP servers over streamable HTTP or SSE, tool discovery, encrypted bearer tokens, enable/disable, tool runner with live output, attachable from any composer |
 | **Agents** | Four harnesses, System 2 lane, effort, posture, tool belt, questions-per-turn, dual-process diagram |
 | **Skills** | Reusable instructions attached with `/`, slash menu with keyboard navigation, chips on the turn, builtin and custom, enable/disable |
-| **Settings** | Simulated/live switch, health probe, S1 thresholds and model, S2 lane and effort, posture, per-account providers, account and persistence status, density/motion, deploy notes |
+| **Settings** | Simulated/live switch, health probe, S1 thresholds and model, searchable S2 lane (live OpenRouter catalog), effort, posture, per-account providers, account and persistence status, density/motion, deploy notes |
 
 The UI is deliberately honest about the runtime: the topbar shows **simulated**, **live · dual** or **live · direct**. Live failures surface on the turn with the provider's message instead of quietly replaying the deterministic simulation.
 
@@ -76,11 +76,12 @@ The Worker serves the SPA plus a same-origin JSON API. Session cookies are HttpO
 | `GET` · `POST /api/mcp`, `PATCH` · `DELETE /api/mcp/:id` | MCP servers |
 | `POST /api/mcp/:id/refresh` · `call` | tool discovery and invocation |
 | `GET /api/health` | which lanes and providers are ready |
+| `GET /api/models?provider=openrouter` | the live OpenRouter catalog for the account |
 | `POST /api/jev` · `/api/system2` | System 1 and System 2 proxies |
 
 Add keys in **Vault**; each account stores its own. Keys are sealed with AES-GCM before they are written to D1 and are decrypted only for the upstream call that needs them. `SOSYSTEM_SECRET` is optional: when it is set the Worker derives the sealing key from it, otherwise it generates one and keeps it in the `meta` table. Either way the browser never receives a stored key and there is no reveal endpoint.
 
-Worker-level secrets still work as a fallback for a deployment owner who wants one shared key (`TYPESAFE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`). A key saved in the Vault takes precedence. If a route is missing a key, the turn falls back to simulation with a visible notice instead of failing the chat.
+Worker-level secrets still work as a fallback for a deployment owner who wants one shared key (`TYPESAFE_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`). A key saved in the Vault takes precedence. If a live provider call fails, the turn reports the provider's message; it does not silently switch to simulation. With no System 1 key, live runs as a direct single-model agent.
 
 ## Deploy
 

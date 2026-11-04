@@ -5,6 +5,7 @@ import type {
   McpCallResult,
   McpServer,
   McpTransport,
+  ModelCatalog,
   ProviderStatus,
   SessionUser,
   WorkspaceSnapshot,
@@ -79,6 +80,8 @@ export const api = {
     request<{ ok: boolean; authenticated: boolean; jev: boolean; system2: boolean; keyCustody: string }>(
       '/api/health',
     ),
+  models: (provider = 'openrouter') =>
+    request<ModelCatalog>(`/api/models?provider=${encodeURIComponent(provider)}`),
 
   workspace: () => request<{ workspace: WorkspaceSnapshot; updatedAt: number }>('/api/workspace'),
   saveWorkspace: (workspace: WorkspaceSnapshot) =>

@@ -191,6 +191,8 @@ Edit in Settings; the changes are live and persist to D1. The defaults are in `s
 
 Settings → System 2 lane. The engine passes `s2Model` through to the trace and the live request; model IDs are strings, not enums, so a new lane requires no type change.
 
+With an OpenRouter key, Settings loads the live catalog from `/api/models` and the picker searches every model the key can see. Any `vendor/model` id routes to OpenRouter; native Claude, GPT and Gemini ids keep their direct providers.
+
 ---
 
 ## 9. Testing the loop without a key

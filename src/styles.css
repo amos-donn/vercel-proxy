@@ -2737,3 +2737,10 @@ body {
 }
 .runtime-lanes div { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-faint); font-size: 10.5px; }
 .runtime-lanes b { color: var(--text-secondary); font-weight: 500; }
+
+/* Searchable model catalog in Settings */
+.model-picker { display: grid; gap: 8px; }
+.model-picker select { width: 100%; }
+.model-catalog { display: flex; align-items: center; gap: 8px; }
+.model-catalog .input { flex: 1; min-width: 0; }
+.model-meta { margin-top: -2px; }

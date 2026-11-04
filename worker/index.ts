@@ -7,6 +7,7 @@
  *   /api/keys        encrypted BYOK provider keys + audit trail
  *   /api/mcp         connected MCP servers, tool discovery and tool calls
  *   /api/health      which lanes are configured (booleans only)
+ *   /api/models      the live OpenRouter model catalog for the account
  *   /api/jev         System 1 proxy
  *   /api/system2     System 2 proxy
  *
@@ -24,6 +25,7 @@ import {
   getInventory,
   health,
   jevAnswer,
+  listModels,
   setUserKey,
   system2,
 } from './providers'
@@ -283,6 +285,13 @@ export default {
       /* ---------------------------------------------------------------- *
          Model lanes
        * ---------------------------------------------------------------- */
+
+      if (path === '/api/models') {
+        if (method !== 'GET') throw new ApiError(405, 'method_not_allowed')
+        const user = await requireUser(request, env)
+        const provider = url.searchParams.get('provider') ?? 'openrouter'
+        return json(await listModels(env, user.id, provider))
+      }
 
       if (path === '/api/jev') {
         if (method !== 'POST') throw new ApiError(405, 'method_not_allowed')

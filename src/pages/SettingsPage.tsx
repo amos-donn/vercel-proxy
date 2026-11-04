@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   ChevronRight,
   Cloud,
@@ -7,6 +7,7 @@ import {
   KeyRound,
   Loader2,
   LogOut,
+  RefreshCw,
   ShieldAlert,
   Sparkles,
   Terminal,
@@ -14,12 +15,22 @@ import {
   Zap,
 } from 'lucide-react'
 import { useStore } from '../store'
-import type { ApprovalPosture, View } from '../types'
+import type { ApprovalPosture, ModelOption, View } from '../types'
+import { providerForModel } from '../data/providers'
 import { api } from '../lib/api'
 import { cn, money, tokens } from '../lib/format'
 import { Chip, Field, Meter, Segmented, Toggle } from '../components/ui'
 
 const defaultThresholds = { accept: 0.62, escalate: 0.55, risky: 0.5 }
+
+const curatedModels = [
+  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5 · Anthropic' },
+  { id: 'claude-opus-5', label: 'Claude Opus 5 · Anthropic' },
+  { id: 'gpt-5.2', label: 'GPT-5.2 · OpenAI' },
+  { id: 'gpt-5-mini', label: 'GPT-5 mini · OpenAI' },
+  { id: 'gemini-3-pro', label: 'Gemini 3 Pro · Google' },
+  { id: 'openai/gpt-5.2', label: 'GPT-5.2 · OpenRouter' },
+]
 
 export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void }) {
   const {
@@ -40,6 +51,13 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
   const system2Ready = providers.some((provider) => provider.id !== 'typesafe' && provider.status === 'connected')
   const [health, setHealth] = useState<'idle' | 'checking' | 'ok' | 'down'>('idle')
   const [healthText, setHealthText] = useState('Not checked yet.')
+  const openRouterReady = providers.some(
+    (provider) => provider.id === 'openrouter' && provider.status === 'connected',
+  )
+  const [catalog, setCatalog] = useState<ModelOption[]>([])
+  const [catalogState, setCatalogState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [catalogError, setCatalogError] = useState('')
+  const [modelQuery, setModelQuery] = useState('')
 
   const testRuntime = async () => {
     setHealth('checking')
@@ -58,6 +76,44 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
       setHealthText(error instanceof Error ? error.message : 'Health check failed')
     }
   }
+
+  const loadCatalog = async () => {
+    setCatalogState('loading')
+    setCatalogError('')
+    try {
+      const body = await api.models('openrouter')
+      setCatalog(body.models)
+      setCatalogState('ready')
+    } catch (error) {
+      setCatalogState('error')
+      setCatalogError(error instanceof Error ? error.message : 'Could not load the OpenRouter catalog.')
+    }
+  }
+
+  useEffect(() => {
+    if (openRouterReady) void loadCatalog()
+  }, [openRouterReady])
+
+  const query = modelQuery.trim().toLowerCase()
+  const catalogModels = catalog.filter(
+    (model) => !curatedModels.some((curated) => curated.id === model.id),
+  )
+  const visibleCatalog = query
+    ? catalogModels.filter(
+        (model) =>
+          model.id.toLowerCase().includes(query) || model.name.toLowerCase().includes(query),
+      )
+    : catalogModels
+  const selectedCatalogModel = catalog.find((model) => model.id === settings.s2Model)
+  if (selectedCatalogModel && !visibleCatalog.some((model) => model.id === selectedCatalogModel.id)) {
+    visibleCatalog.unshift(selectedCatalogModel)
+  }
+  const selectedProvider = providerForModel(settings.s2Model)
+  const selectedProviderName =
+    providers.find((provider) => provider.id === selectedProvider)?.name ?? selectedProvider
+  const selectedProviderReady = providers.some(
+    (provider) => provider.id === selectedProvider && provider.status === 'connected',
+  )
 
   const copy = async (text: string, label: string) => {
     try {
@@ -177,11 +233,71 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
             <Sparkles size={15} />
           </header>
           <Field label="Default lane" hint="The key for this model's provider must be in the Vault.">
-            <select className="input mono" value={settings.s2Model} onChange={(event) => patchSettings({ s2Model: event.target.value })}>
-              {['claude-sonnet-5', 'claude-opus-5', 'gpt-5.2', 'gpt-5-mini', 'gemini-3-pro', 'openai/gpt-5.2'].map((model) => (
-                <option key={model} value={model}>{model}</option>
-              ))}
-            </select>
+            <div className="model-picker">
+              <select className="input mono" value={settings.s2Model} onChange={(event) => patchSettings({ s2Model: event.target.value })}>
+                <optgroup label="Direct lanes">
+                  {curatedModels.map((model) => (
+                    <option key={model.id} value={model.id}>{model.label}</option>
+                  ))}
+                </optgroup>
+                {visibleCatalog.length ? (
+                  <optgroup label={`OpenRouter · ${catalog.length} models`}>
+                    {visibleCatalog.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name === model.id ? model.id : `${model.name} — ${model.id}`}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+              </select>
+              {openRouterReady ? (
+                <div className="model-catalog">
+                  <input
+                    className="input"
+                    placeholder={catalog.length ? `Filter ${catalog.length} models…` : 'Filter OpenRouter models…'}
+                    value={modelQuery}
+                    onChange={(event) => setModelQuery(event.target.value)}
+                    aria-label="Filter OpenRouter models"
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => void loadCatalog()}
+                    disabled={catalogState === 'loading'}
+                  >
+                    {catalogState === 'loading' ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />}
+                    {catalogState === 'loading' ? 'Loading' : 'Refresh'}
+                  </button>
+                </div>
+              ) : null}
+              {catalogState === 'error' ? (
+                <div className="inline-warn">
+                  <ShieldAlert size={12} /> {catalogError}
+                </div>
+              ) : catalogState === 'ready' ? (
+                <p className="tiny faint">
+                  {catalog.length} models loaded from OpenRouter. Search by name or id.
+                </p>
+              ) : null}
+              {selectedCatalogModel ? (
+                <p className="tiny faint model-meta">
+                  {selectedCatalogModel.context
+                    ? `${Math.round(selectedCatalogModel.context / 1000)}k context`
+                    : 'context not listed'}
+                  {selectedCatalogModel.promptPerMillion !== undefined
+                    ? ` · $${selectedCatalogModel.promptPerMillion.toFixed(2)}/M in · $${(
+                        selectedCatalogModel.completionPerMillion ?? 0
+                      ).toFixed(2)}/M out`
+                    : ''}
+                </p>
+              ) : null}
+              {!selectedProviderReady ? (
+                <div className="inline-warn">
+                  <ShieldAlert size={12} /> This lane needs a {selectedProviderName} key. Pick a model
+                  from a connected provider.
+                </div>
+              ) : null}
+            </div>
           </Field>
           <Field label="Effort">
             <Segmented
@@ -247,7 +363,9 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
                   <strong>{provider.name}</strong>
                   <span className="tiny faint">{provider.note}</span>
                 </div>
-                <span className="provider-models mono tiny">{provider.models} models</span>
+                <span className="provider-models mono tiny">
+                  {provider.id === 'openrouter' && catalog.length ? catalog.length : provider.models} models
+                </span>
                 <span className="provider-key mono tiny">{provider.keyMask ?? 'no key'}</span>
                 {provider.status === 'connected' ? (
                   <Chip tone="lime">{provider.source === 'worker' ? 'worker secret' : 'connected'}</Chip>
@@ -364,7 +482,7 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
       </div>
 
       <footer className="settings-foot">
-        <span className="mono">Mezze v0.4.2</span>
+        <span className="mono">Mezze v0.4.3</span>
         <span>Built for Cloudflare Workers · React 19 · Jev {settings.jevModel}</span>
         <span className="grow" />
         <span>D1 workspace · encrypted BYOK · MCP</span>

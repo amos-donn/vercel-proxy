@@ -472,3 +472,18 @@ export interface Settings {
   compact: boolean
   reducedMotion: boolean
 }
+
+/* Live provider model catalogs (OpenRouter today). */
+export interface ModelOption {
+  id: string
+  name: string
+  context: number
+  promptPerMillion?: number
+  completionPerMillion?: number
+}
+
+export interface ModelCatalog {
+  provider: string
+  models: ModelOption[]
+  fetchedAt: number
+}
