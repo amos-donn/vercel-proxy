@@ -87,6 +87,8 @@ export interface Escalation {
 export interface DecisionTrace {
   id: string
   route: 's1' | 's2'
+  /** True when System 1 was unavailable and the turn went straight to the model. */
+  direct?: boolean
   s1: {
     model: string
     version: string
@@ -460,6 +462,8 @@ export interface Thresholds {
 
 export interface Settings {
   runtime: RuntimeMode
+  /** Set once the user picks a runtime by hand, so key detection can't override it. */
+  runtimeChosen?: boolean
   jevModel: string
   s2Model: string
   effort: 'low' | 'medium' | 'high'

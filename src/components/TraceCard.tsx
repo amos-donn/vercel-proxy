@@ -5,6 +5,38 @@ import { Chip } from './ui'
 
 export function TraceCard({ trace }: { trace: DecisionTrace }) {
   const { s1, escalation } = trace
+
+  if (trace.direct) {
+    const s2 = escalation?.s2
+    return (
+      <div className="trace-card trace-direct">
+        <header className="trace-head">
+          <span className="trace-badge">
+            <Brain size={11} /> Direct agent
+          </span>
+          <span className="mono trace-model">{s2?.model ?? 'selected model'}</span>
+          <span className="trace-decision mono">no System 1</span>
+          <Chip tone="lime">single model</Chip>
+          <span className="trace-metrics mono">
+            {s2 ? `${s2.latencyMs}ms · ${money(s2.costUsd)}` : 'direct call'}
+          </span>
+        </header>
+        <div className="trace-body direct-body">
+          <p>
+            Jev isn’t configured, so this turn skipped typed routing and went straight to the selected
+            System 2 model. Add a TypeSafe AI key to restore the dual-process loop.
+          </p>
+        </div>
+        <footer className="trace-foot">
+          <span>
+            <Gauge size={11} /> direct single-model turn
+          </span>
+          <span className="faint">no routing cost</span>
+        </footer>
+      </div>
+    )
+  }
+
   return (
     <div className="trace-card">
       <header className="trace-head">

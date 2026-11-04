@@ -18,9 +18,12 @@ Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP a
 | System 2 planning | ● | Plan steps with done/active/pending/blocked state, visible in the chat and side panel. |
 | System 2 prose/artifacts | ● | Drafts, reports, transcript summaries and queue analyses. |
 | Per-turn trace | ● | Route, model, latency, tokens, questions, decision, probabilities, confidence bar with threshold marker, escalation reason, S2 cost, savings vs always-S2. |
-| Live or simulated | ● | Default simulation; live worker proxies with per-turn fallback and a notice. |
+| Live or simulated | ● | Simulated is local and key-free. Live runs System 1 → System 2 with a Jev key; without one it calls the selected System 2 model directly as a normal agent. |
+| Direct agent | ● | No System 1 key: every live turn skips typed routing and goes straight to System 2, with a distinct “Direct agent” trace. |
+| Honest failures | ● | Live provider errors surface with the provider message; live never silently falls back to simulation. |
+| Auto-live | ● | A configured System 2 key switches a fresh account from simulated to live once, until the runtime is chosen by hand. |
 | Forced deliberation | ● | “Think harder” and Research/Write modes force System 2 for that turn. |
-| Chat-level telemetry | ● | Decisions, escalations, fast-path %, tool count, saved/spent. |
+| Chat-level telemetry | ● | Typed decisions, direct-agent turns, escalations, fast-path %, tool count, saved/spent. |
 
 ## 2. Superapp shell
 

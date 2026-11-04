@@ -52,7 +52,10 @@ function Gate() {
 }
 
 function Shell() {
-  const { chats, settings, jobs, files, saveState } = useStore()
+  const { chats, settings, jobs, files, saveState, providers } = useStore()
+  const system1Ready = providers.some(
+    (provider) => provider.id === 'typesafe' && provider.status === 'connected',
+  )
   const [view, setView] = useState<View>({ name: 'home' })
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [homeToken, setHomeToken] = useState(0)
@@ -160,12 +163,18 @@ function Shell() {
               onClick={() => navigate({ name: 'settings' })}
               title={
                 settings.runtime === 'live'
-                  ? 'Turns call your configured providers'
+                  ? system1Ready
+                    ? 'Dual process: System 1 routes, System 2 writes'
+                    : 'Direct agent: no System 1 key, turns go straight to System 2'
                   : 'Deterministic simulation'
               }
             >
               <span className="dot" />
-              {settings.runtime === 'live' ? 'live runtime' : 'simulated'}
+              {settings.runtime === 'live'
+                ? system1Ready
+                  ? 'live · dual'
+                  : 'live · direct'
+                : 'simulated'}
             </button>
           </div>
         </header>

@@ -29,6 +29,7 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
     media,
     automations,
     keys,
+    providers,
     mcpServers,
     skills,
     agents,
@@ -59,6 +60,9 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
     [files],
   )
   const connectedServers = mcpServers.filter((server) => server.enabled)
+  const system1Ready = providers.some(
+    (provider) => provider.id === 'typesafe' && provider.status === 'connected',
+  )
   const enabledSkills = skills.filter((skill) => skill.enabled)
 
   const start = (
@@ -91,7 +95,11 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
           <div className="hero-glow" aria-hidden="true" />
           <div className="eyebrow">
             <span className={cn('dot', settings.runtime === 'live' && 'dot-live')} />
-            {settings.runtime === 'live' ? 'live worker · your keys' : 'simulated · add keys to go live'}
+            {settings.runtime === 'live'
+              ? system1Ready
+                ? 'live worker · dual process'
+                : 'live worker · direct agent'
+              : 'simulated · add keys to go live'}
           </div>
           <h1>
             {greeting}, {firstName}.

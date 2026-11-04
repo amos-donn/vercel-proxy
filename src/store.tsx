@@ -288,6 +288,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })()
   }, [status, user, loadWorkspace, refreshKeys, notify])
 
+  /* A configured System 2 key should mean a real agent by default, unless the
+     account has explicitly chosen a runtime. No System 1 key is fine: the turn
+     runs as a direct single-model agent. */
+  useEffect(() => {
+    if (!hydrated.current || autoLive.current) return
+    if (settings.runtime !== 'simulated' || settings.runtimeChosen) return
+    const system2Ready = Object.entries(providerStatus).some(
+      ([id, status]) => id !== 'typesafe' && status.configured,
+    )
+    if (!system2Ready) return
+    autoLive.current = true
+    setSettings((prev) => ({ ...prev, runtime: 'live', runtimeChosen: true }))
+    notify('Live runtime on · a System 2 key is configured')
+  }, [providerStatus, settings.runtime, settings.runtimeChosen, notify])
+
   /* Persist the serializable workspace on a short debounce. */
   const snapshot = useMemo<WorkspaceSnapshot>(
     () => ({ chats, files, canvases, scheduled, jobs, media, automations, agents, skills, settings }),
@@ -298,6 +313,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const chatsRef = useRef(chats)
   chatsRef.current = chats
   const firing = useRef<Set<string>>(new Set())
+  const autoLive = useRef(false)
 
   const saveNow = useCallback(async () => {
     if (!hydrated.current) return
@@ -681,11 +697,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     for (const chat of chats) {
       for (const message of chat.messages) {
         if (message.kind !== 'trace') continue
+        const trace = message.trace
+        spend += trace.s1.costUsd + (trace.escalation?.s2.costUsd ?? 0)
+        saved += trace.savedUsd
+        if (trace.direct) continue
         decisions += 1
-        promptTokens += message.trace.s1.promptTokens
-        spend += message.trace.s1.costUsd + (message.trace.escalation?.s2.costUsd ?? 0)
-        saved += message.trace.savedUsd
-        if (message.trace.route === 's2') escalations += 1
+        promptTokens += trace.s1.promptTokens
+        if (trace.route === 's2') escalations += 1
       }
     }
     return {

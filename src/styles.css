@@ -2719,3 +2719,21 @@ body {
   .composer-left .segmented { order: 5; width: 100%; }
   .composer-right .composer-hint { display: none; }
 }
+
+/* Direct-agent turns: no System 1, no fake routing numbers */
+.trace-direct { border-color: rgba(184, 242, 77, 0.22); }
+.trace-direct .trace-badge { color: var(--accent); }
+.trace-direct .direct-body { padding: 12px 13px; }
+.trace-direct .direct-body p { max-width: 64ch; color: var(--text-secondary); font-size: 11.5px; line-height: 1.65; }
+.trace-direct .trace-foot { color: var(--text-faint); }
+.runtime-lanes {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-1);
+}
+.runtime-lanes div { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-faint); font-size: 10.5px; }
+.runtime-lanes b { color: var(--text-secondary); font-weight: 500; }

@@ -42,6 +42,9 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
   const alive = useRef(true)
 
   const agent = store.agents.find((item) => item.id === chat?.agentId)
+  const system1Ready = store.providers.some(
+    (provider) => provider.id === 'typesafe' && provider.status === 'connected',
+  )
   const pendingApproval = chat?.messages.find(
     (message): message is Extract<ChatMessage, { kind: 'approval' }> =>
       message.kind === 'approval' && message.status === 'pending',
@@ -76,15 +79,18 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
   }, [chat?.id, queued, busy])
 
   const stats = useMemo(() => {
-    const traces = chat?.messages.filter(
+    const all = chat?.messages.filter(
       (message): message is Extract<ChatMessage, { kind: 'trace' }> => message.kind === 'trace',
     ) ?? []
+    const direct = all.filter((message) => message.trace.direct).length
+    const traces = all.filter((message) => !message.trace.direct)
     const escalations = traces.filter((message) => message.trace.route === 's2').length
-    const saved = traces.reduce((sum, message) => sum + message.trace.savedUsd, 0)
+    const saved = all.reduce((sum, message) => sum + message.trace.savedUsd, 0)
     const tools = chat?.messages.filter((message) => message.kind === 'tool').length ?? 0
     const artifacts = chat?.messages.filter((message) => message.kind === 'artifact') ?? []
     return {
       traces: traces.length,
+      direct,
       escalations,
       saved,
       tools,
@@ -190,6 +196,7 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
         thresholds: store.settings.thresholds,
         s2Model: store.settings.s2Model,
         runtime: store.settings.runtime,
+        system1Configured: system1Ready,
         skills: skills.map((skill) => ({ name: skill.name, prompt: skill.prompt })),
         evidence,
       })
@@ -396,7 +403,10 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
             {(chat.skillIds ?? []).length ? (
               <span className="mono">{chat.skillIds?.length} skills</span>
             ) : null}
-            <span>{stats.traces} decisions · {stats.escalations} escalations</span>
+            <span>
+              {stats.traces} decisions · {stats.escalations} escalations
+              {stats.direct ? ` · ${stats.direct} direct` : ''}
+            </span>
           </div>
         </div>
         <div className="chat-actions">
@@ -499,8 +509,12 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
               onOpenIntegrations={() => onNavigate({ name: 'integrations' })}
             />
             <p className="dock-note">
-              <span className="dot" /> {store.settings.runtime === 'simulated' ? 'simulated runtime' : 'live worker'} ·
-              workspace saved to D1 · keys stay in the Worker
+              <span className="dot" />{' '}
+              {store.settings.runtime === 'simulated'
+                ? 'simulated runtime'
+                : system1Ready
+                  ? 'live · dual process'
+                  : 'live · direct agent'} · workspace saved to D1 · keys stay in the Worker
             </p>
           </div>
         </div>
@@ -523,6 +537,7 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
                   <h3>This chat</h3>
                   <div className="stat-rows">
                     <div><span>Typed decisions</span><span className="mono">{stats.traces}</span></div>
+                    <div><span>Direct agent</span><span className="mono">{stats.direct}</span></div>
                     <div><span>Escalations</span><span className="mono">{stats.escalations}</span></div>
                     <div><span>Fast path</span><span className="mono">{stats.fastPath}%</span></div>
                     <div><span>Tools</span><span className="mono">{stats.tools}</span></div>

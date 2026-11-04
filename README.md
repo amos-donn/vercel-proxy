@@ -7,7 +7,7 @@ A **bring-your-own-key agent workspace** with two brains:
 
 Around that loop sits a superapp shell: home composer, pinned chats, search, files, a secret vault, durable-looking jobs with rate-limit waits, media transcription with a transcript-synced player, automations, MCP integrations, agent configuration and settings.
 
-> **Status:** accounts, D1 persistence, encrypted BYOK keys, MCP tool calls and skills are implemented. The loop runs deterministically in the browser when the runtime is **Simulated**; **Live Worker** sends the same turns to `/api/jev` and `/api/system2` using the key stored for your account. A real sandbox, shell and provider billing are still out of scope.
+> **Status:** accounts, D1 persistence, encrypted BYOK keys, MCP tool calls and skills are implemented. The loop runs deterministically in the browser when the runtime is **Simulated**; **Live Worker** sends turns to `/api/jev` → `/api/system2` using the keys stored for your account. With no System 1 key, live runs as a normal single-model agent against `/api/system2`. A real sandbox, shell and provider billing are still out of scope.
 
 ---
 
@@ -21,13 +21,13 @@ npm run check               # tsc --noEmit (client + worker)
 npm run build               # typecheck + vite build → dist/
 ```
 
-Create an account on first load; the workspace is empty apart from starter memory files and four builtin skills. No provider key is needed to exercise the product: leave the runtime on **Simulated**, type in the home composer, approve the write gate, then inspect the trace panel. Add keys in **Vault** and switch to **Live Worker** for real calls.
+Create an account on first load; the workspace is empty apart from starter memory files and four builtin skills. No provider key is needed to exercise the product: leave the runtime on **Simulated**, type in the home composer, approve the write gate, then inspect the trace panel. Add a System 2 key in **Vault** and the runtime switches to **Live Worker** once; add a TypeSafe AI key too for the full dual-process loop. You can switch back at any time in **Settings → Runtime**.
 
 ## What is implemented
 
 | Surface | Shipped behavior |
 | --- | --- |
-| **Dual process** | Five typed questions per turn, confidence and `needs_system_2` routing, risk gate, template-only S1 replies, S2 plans/prose, per-turn trace with probabilities, cost and savings |
+| **Dual process** | Five typed questions per turn, confidence and `needs_system_2` routing, risk gate, template-only S1 replies, S2 plans/prose, per-turn trace with probabilities, cost and savings; direct-agent mode when System 1 is absent |
 | **Home** | Greeting, hero composer (Auto / Research / Write + Think harder), suggestions, pinned work, live jobs, latest artifact, tools and loop explainer |
 | **Chats** | Rail + sidebar, pinned groups, search, chat index, streaming replies, plan cards, tool cards, approvals, artifacts, trace inspector, Markdown export |
 | **Files** | Rooted path validation, tree, Markdown/raw preview, create, upload, download, delete confirmation, byte accounting |
@@ -40,13 +40,14 @@ Create an account on first load; the workspace is empty apart from starter memor
 | **Skills** | Reusable instructions attached with `/`, slash menu with keyboard navigation, chips on the turn, builtin and custom, enable/disable |
 | **Settings** | Simulated/live switch, health probe, S1 thresholds and model, S2 lane and effort, posture, per-account providers, account and persistence status, density/motion, deploy notes |
 
-The UI is deliberately honest about simulation: the topbar shows **simulated** or **live runtime**, and every simulated turn still goes through the same routing code as the live path.
+The UI is deliberately honest about the runtime: the topbar shows **simulated**, **live · dual** or **live · direct**. Live failures surface on the turn with the provider's message instead of quietly replaying the deterministic simulation.
 
 ## How a turn works
 
 ```
 user message
    │
+   ├── no Jev key ──► direct agent: System 2 answers, trace says “direct”
    ▼
 System 1 (Jev) ── 5 typed questions ──► answers { choice, confidence, probabilities, value }
    │

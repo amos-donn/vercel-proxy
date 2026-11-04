@@ -36,6 +36,8 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
     signOut,
     notify,
   } = useStore()
+  const jevReady = providers.some((provider) => provider.id === 'typesafe' && provider.status === 'connected')
+  const system2Ready = providers.some((provider) => provider.id !== 'typesafe' && provider.status === 'connected')
   const [health, setHealth] = useState<'idle' | 'checking' | 'ok' | 'down'>('idle')
   const [healthText, setHealthText] = useState('Not checked yet.')
 
@@ -87,16 +89,21 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
           </header>
           <Segmented
             value={settings.runtime}
-            onChange={(runtime) => patchSettings({ runtime })}
+            onChange={(runtime) => patchSettings({ runtime, runtimeChosen: true })}
             options={[
               { value: 'simulated', label: 'Simulated' },
               { value: 'live', label: 'Live Worker' },
             ]}
           />
+          <div className="runtime-lanes">
+            <div><span>System 1 · Jev</span><b>{jevReady ? 'ready' : 'not configured'}</b></div>
+            <div><span>System 2 · model</span><b>{system2Ready ? 'ready' : 'no key'}</b></div>
+            <div><span>Architecture</span><b>{jevReady ? 'dual process' : 'direct single model'}</b></div>
+          </div>
           <p className="setting-copy">
             Simulated is deterministic and needs no keys: it exercises routing, tools, gates and costs.
-            Live posts to <code>/api/jev</code> and <code>/api/system2</code>; the Worker uses the key you
-            stored for the selected model.
+            Live uses <code>/api/jev</code> when System 1 is configured. Without a Jev key it skips typed
+            routing and calls <code>/api/system2</code> as a normal single-model agent.
           </p>
           <div className="health-row">
             <button type="button" className="btn btn-sm" onClick={() => void testRuntime()} disabled={health === 'checking'}>
@@ -107,7 +114,10 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
           {settings.runtime === 'live' ? (
             <div className="inline-warn">
               <ShieldAlert size={12} />
-              If the provider call fails, the turn falls back to simulation and says so on the trace.
+              {jevReady
+                ? 'System 1 routes every turn; System 2 writes when the decision warrants it.'
+                : 'No System 1 key: every live turn goes straight to the selected System 2 model.'}{' '}
+              Provider errors surface on the turn — live never silently falls back to simulation.
             </div>
           ) : null}
         </section>
@@ -354,7 +364,7 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
       </div>
 
       <footer className="settings-foot">
-        <span className="mono">Mezze v0.4.1</span>
+        <span className="mono">Mezze v0.4.2</span>
         <span>Built for Cloudflare Workers · React 19 · Jev {settings.jevModel}</span>
         <span className="grow" />
         <span>D1 workspace · encrypted BYOK · MCP</span>
