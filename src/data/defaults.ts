@@ -1,6 +1,7 @@
 import type {
   Agent,
   Automation,
+  Canvas,
   Job,
   Lane,
   MediaItem,
@@ -44,7 +45,7 @@ Index only. One line per topic; details live in memory/<topic>.md.
   ),
   file(
     'workspace/welcome.md',
-    `# Welcome to sosystem
+    `# Welcome to Mezze
 
 This workspace belongs to your account. Open **Settings → API keys** to add your own
 TypeSafe and System 2 keys, then switch the runtime from Simulated to Live Worker.
@@ -186,15 +187,54 @@ export const quotas: Quota[] = [
   { id: 'q4', provider: 'Gemini', metric: 'concurrency', used: 0, limit: 8, resets: 'live' },
 ]
 
+export function welcomeCanvas(): Canvas {
+  return {
+    id: 'canvas_welcome',
+    name: 'Welcome canvas',
+    description: 'A real sandbox: edit the code, press Run, and the preview reloads.',
+    origin: 'agent',
+    updatedAt: Date.now(),
+    html: `<main class="card">
+  <p class="kicker">live canvas</p>
+  <h1 id="title">A small page you can edit.</h1>
+  <p class="lede">This preview runs in a sandboxed frame. Change the code on the left, press Run, and it re-renders.</p>
+  <div class="row">
+    <button id="tap" class="btn">Tap me</button>
+    <output id="count">0 taps</output>
+  </div>
+</main>`,
+    css: `:root { color-scheme: dark; --ink: #eef3e6; --muted: #9aa392; --accent: #b8f24d; --panel: #12150f; --line: #262b20; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; background: #0a0b09; color: var(--ink); font-family: Inter, system-ui, sans-serif; }
+.card { width: min(520px, 100%); padding: 34px; border: 1px solid var(--line); border-radius: 18px; background: radial-gradient(120% 90% at 100% 0, rgba(184, 242, 77, 0.09), transparent 60%), var(--panel); }
+.kicker { margin: 0 0 12px; color: var(--accent); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; }
+h1 { margin: 0 0 12px; font-family: Georgia, 'Times New Roman', serif; font-size: 34px; font-weight: 400; line-height: 1.08; letter-spacing: -0.02em; }
+.lede { margin: 0 0 24px; color: var(--muted); font-size: 14px; line-height: 1.65; }
+.row { display: flex; align-items: center; gap: 14px; }
+.btn { padding: 9px 15px; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent); color: #0b1204; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.btn:active { transform: translateY(1px); }
+output { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }`,
+    js: `const output = document.getElementById('count')
+let taps = 0
+document.getElementById('tap').addEventListener('click', () => {
+  taps += 1
+  output.textContent = taps + (taps === 1 ? ' tap' : ' taps')
+  document.getElementById('title').textContent = taps > 4 ? 'You found the sandbox.' : 'A small page you can edit.'
+})`,
+  }
+}
+
 export function defaultWorkspace(): WorkspaceSnapshot {
   return {
     chats: [],
     files: starterFiles.map((item) => ({ ...item })),
+    canvases: [welcomeCanvas()],
     jobs: [] as Job[],
     media: [] as MediaItem[],
     automations: [] as Automation[],
     agents: defaultAgents.map((item) => ({ ...item, tools: [...item.tools] })),
     skills: defaultSkills.map((item) => ({ ...item })),
+    scheduled: [],
     settings: { ...settings, thresholds: { ...settings.thresholds } },
   }
 }

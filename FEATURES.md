@@ -1,4 +1,4 @@
-# sosystem — feature set
+# Mezze — feature set
 
 Legend: **●** shipped and interactive · **◐** shipped, simulated by design · **○** next pass (needs infrastructure).
 
@@ -26,7 +26,7 @@ Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP a
 
 | Feature | Status | Detail |
 | --- | --- | --- |
-| Icon rail | ● | Home, chats, files, vault, jobs, media, automations, integrations, skills, settings. |
+| Icon rail | ● | Home, chats, files, canvas, vault, jobs, media, automations, integrations, skills, settings. |
 | Sidebar | ● | New chat, search, pinned chats, grouped recent chats, tool counts, workspace spend and fast-path share. |
 | Profile popup | ● | Real identity, workspace spend and fast-path meter, settings, keys, shortcuts, density, reduced motion, sign out. |
 | Command palette | ● | `⌘K` across pages, chats, skills, files and jobs; file entries open the file. |
@@ -43,15 +43,16 @@ Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP a
 | Chat index | ● | Filter All/Pinned/Needs you, text search, status, item counts, tags. |
 | Pinned chats | ● | Pin/unpin from sidebar, chat header or table; pinned groups on Home. |
 | Streaming replies | ● | Word-paced streaming with a caret; trace, tools and plans appear in order. |
+| Scheduled send | ● | Dropdown beside send: in 15 minutes, 1 hour, tomorrow 9:00, or a custom time. Queued per chat, shown as chips, sent while Mezze is open. |
 | Approval gates | ● | Inline card with risk, scope, approve once / deny. Approving writes a real workspace file. |
 | Skill chips | ● | Skills attached with `/` show on the user turn and in the chat header. |
 | MCP calls | ● | Attached tool calls run before the turn, render their real output, and reach System 2 as evidence. |
 | Tool cards | ● | Collapsible input/output, running/ok state, duration, optional diff renderer. |
-| Artifact cards | ● | Jump to Files or Media; content retained on the message. |
+| Artifact cards | ● | Jump to Files, Media or Canvas; content retained on the message. |
 | Chat inspector | ● | Trace, plan and artifacts tabs; S1/S2 configuration summary. |
 | Export | ● | Download the thread as Markdown. |
-| Delete/pin | ● | Session-local actions with confirmation where destructive. |
-| Starter workspace | ● | New accounts get memory and welcome files plus four builtin skills; chats start empty. |
+| Delete/pin | ● | Persisted to the workspace snapshot, with confirmation where destructive. |
+| Starter workspace | ● | New accounts get memory, welcome files, four builtin skills and a live welcome canvas; chats start empty. |
 
 ## 4. Files
 
@@ -117,7 +118,19 @@ Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP a
 | Delete | ● | Inline confirmation. |
 | Honest limit | ● | Cadence and prompts persist, but no scheduler runs them yet; Run now opens a real chat. |
 
-## 9. Skills
+## 9. Canvas
+
+| Feature | Status | Detail |
+| --- | --- | --- |
+| Library | ● | Saved canvases with name, origin (agent/you), updated date, and a live dirty dot. |
+| Sandboxed preview | ● | Runs in an iframe with `allow-scripts allow-forms allow-modals allow-popups` and an opaque origin: no cookies, storage or workspace access. |
+| Code editor | ● | HTML, CSS and JS tabs with a real `Run` that commits the draft and reloads the preview. |
+| Agent generation | ● | Canvas mode, or a canvas-shaped prompt, produces a complete interactive page. Live providers return canvas JSON; simulation generates a real landing page, dashboard or task board. |
+| Import | ● | Upload HTML, CSS, JS, SVG, JSON, text or Markdown; files are combined into one canvas. |
+| Export | ● | Download the current canvas as a single HTML file. |
+| Persistence | ● | Canvases live in the workspace snapshot and save to D1 with everything else. |
+
+## 10. Skills
 
 | Feature | Status | Detail |
 | --- | --- | --- |
@@ -128,7 +141,7 @@ Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP a
 | Create / edit / delete | ● | Shared modal with validation and a unique derived slug. |
 | Persistence | ● | Skills live in the workspace snapshot and save with everything else. |
 
-## 10. Integrations
+## 11. Integrations
 
 | Feature | Status | Detail |
 | --- | --- | --- |
@@ -142,7 +155,7 @@ Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP a
 | Refresh / remove | ● | Re-run discovery, or delete the server and its tools. |
 | Transport scope | ● | HTTPS only; private and loopback endpoints require `ALLOW_PRIVATE_MCP=1` for local development. |
 
-## 11. Agents
+## 12. Agents
 
 | Feature | Status | Detail |
 | --- | --- | --- |
@@ -155,7 +168,7 @@ Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP a
 | Stats | ● | Runs, success, cost-per-run, recent work. |
 | Shared S1 card | ● | Explains the shared typed layer and escalation gate. |
 
-## 12. Settings and operations
+## 13. Settings and operations
 
 | Feature | Status | Detail |
 | --- | --- | --- |
@@ -172,7 +185,7 @@ Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP a
 
 ---
 
-## 13. Security and trust posture
+## 14. Security and trust posture
 
 - Every API route except health and auth requires a session; ownership is taken from the session, never from the request body.
 - Session IDs are hashed at rest, cookies are HttpOnly and SameSite=Lax, passwords use PBKDF2-SHA256 with a per-user salt.
@@ -182,7 +195,7 @@ Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP a
 - Writes stop at approval regardless of System 1 confidence; the typed risk answer can only add a gate.
 - MCP endpoints must use HTTPS and private hosts are rejected unless explicitly enabled for local development.
 
-## 14. Explicit gaps for the next pass
+## 15. Explicit gaps for the next pass
 
 1. Durable Object per thread + SSE resume via `Last-Event-ID`.
 2. D1-backed queue/cron for jobs and automations.

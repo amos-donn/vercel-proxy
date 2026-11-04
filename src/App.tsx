@@ -18,12 +18,14 @@ import { AutomationsPage } from './pages/AutomationsPage'
 import { IntegrationsPage } from './pages/IntegrationsPage'
 import { AgentsPage } from './pages/AgentsPage'
 import { SkillsPage } from './pages/SkillsPage'
+import { CanvasPage } from './pages/CanvasPage'
 import { SettingsPage } from './pages/SettingsPage'
 
 const titles: Record<ViewName, string> = {
   home: 'Home',
   chats: 'Chats',
   files: 'Files',
+  canvas: 'Canvas',
   vault: 'Vault',
   jobs: 'Jobs',
   media: 'Media',
@@ -118,7 +120,7 @@ function Shell() {
       <main className="main">
         <header className="topbar">
           <div className="crumbs">
-            <span className="crumb-root">sosystem</span>
+            <span className="crumb-root">Mezze</span>
             <span className="crumb">
               <span className="crumb-sep">/</span>
               {crumb}
@@ -175,6 +177,7 @@ function Shell() {
           {view.name === 'files' ? (
             <FilesPage key={view.path ?? 'files-root'} initialPath={view.path} />
           ) : null}
+          {view.name === 'canvas' ? <CanvasPage key={view.path ?? 'canvas-root'} initialId={view.path} /> : null}
           {view.name === 'vault' ? <VaultPage /> : null}
           {view.name === 'jobs' ? <JobsPage /> : null}
           {view.name === 'media' ? <MediaPage /> : null}

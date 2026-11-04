@@ -6,6 +6,7 @@ import {
   Brain,
   FileText,
   FolderClosed,
+  Frame,
   KeyRound,
   ListChecks,
   Pin,
@@ -35,6 +36,9 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
     user,
     createChat,
     patchChat,
+    canvases,
+    scheduleSend,
+    scheduled,
     settings,
     notify,
     saveNow,
@@ -57,10 +61,25 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
   const connectedServers = mcpServers.filter((server) => server.enabled)
   const enabledSkills = skills.filter((skill) => skill.enabled)
 
-  const start = (text: string, _attachments: string[], picked: Skill[], toolCalls: McpToolCall[]) => {
+  const start = (
+    text: string,
+    _attachments: string[],
+    picked: Skill[],
+    toolCalls: McpToolCall[],
+    scheduleAt?: number,
+    presetMode?: ComposerMode,
+  ) => {
     const ids = picked.map((skill) => skill.id)
+    if (scheduleAt) {
+      scheduleSend({ chatId: null, text, skillIds: ids, toolCalls, sendAt: scheduleAt })
+      notify(
+        `Scheduled for ${new Date(scheduleAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`,
+      )
+      return
+    }
     const id = createChat(text, 'forge', ids, toolCalls)
-    const tags = [...(mode !== 'auto' ? [mode, 'force-s2'] : []), ...(think ? ['think', 'force-s2'] : [])]
+    const pickedMode = presetMode ?? mode
+    const tags = [...(pickedMode !== 'auto' ? [pickedMode, 'force-s2'] : []), ...(think ? ['think', 'force-s2'] : [])]
     if (tags.length) patchChat(id, { tags })
     onNavigate({ name: 'chat', id })
   }
@@ -92,6 +111,7 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
             onThinkChange={setThink}
             agent={undefined}
             onSubmit={start}
+            onOpenIntegrations={() => onNavigate({ name: 'integrations' })}
           />
 
           <div className="suggestions">
@@ -100,8 +120,17 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
               ['Why did the usage export dead-letter?', 'research'],
               ['Transcribe the founder interview', 'auto'],
               ['Turn the competitor CSV into a memo', 'write'],
-            ].map(([label]) => (
-              <button key={label} type="button" className="suggestion" onClick={() => start(label, [], [], [])}>
+              ['Build a landing page in Canvas', 'canvas'],
+            ].map(([label, preset]) => (
+              <button
+                key={label}
+                type="button"
+                className="suggestion"
+                onClick={() => {
+                  if (preset) setMode(preset as ComposerMode)
+                  start(label, [], [], [], undefined, preset ? (preset as ComposerMode) : undefined)
+                }}
+              >
                 <Sparkles size={12} /> {label}
               </button>
             ))}
@@ -250,6 +279,10 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
             </div>
             <div className="divider" />
             <div className="mini-list">
+              <button type="button" className="mini-row" onClick={() => onNavigate({ name: 'canvas' })}>
+                <Frame size={13} /> {canvases.length} canvas{canvases.length === 1 ? '' : 'es'} · {scheduled.length} scheduled
+                <ArrowRight size={12} />
+              </button>
               <button type="button" className="mini-row" onClick={() => onNavigate({ name: 'automations' })}>
                 <Timer size={13} /> {automations.filter((item) => item.enabled).length} automations running
                 <ArrowRight size={12} />
@@ -276,6 +309,7 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
             <div className="tool-grid">
               {[
                 { label: 'Files', icon: FolderClosed, view: 'files' as const },
+                { label: 'Canvas', icon: Frame, view: 'canvas' as const },
                 { label: 'Vault', icon: KeyRound, view: 'vault' as const },
                 { label: 'Skills', icon: BookOpen, view: 'skills' as const },
                 { label: 'MCP', icon: Sparkles, view: 'integrations' as const },

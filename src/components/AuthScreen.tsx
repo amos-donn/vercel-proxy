@@ -62,7 +62,7 @@ export function AuthScreen() {
           <div className="auth-brand">
             <BrandMark size={34} />
             <div>
-              <strong>sosystem</strong>
+              <strong>Mezze</strong>
               <span className="mono tiny faint">dual-process agent workspace</span>
             </div>
           </div>

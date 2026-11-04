@@ -2,6 +2,7 @@ import {
   BookOpen,
   Bot,
   FolderClosed,
+  Frame,
   Home,
   KeyRound,
   ListChecks,
@@ -17,6 +18,7 @@ const items: Array<{ view: View; label: string; icon: typeof Home }> = [
   { view: { name: 'home' }, label: 'Home', icon: Home },
   { view: { name: 'chats' }, label: 'Chats', icon: MessagesSquare },
   { view: { name: 'files' }, label: 'Files', icon: FolderClosed },
+  { view: { name: 'canvas' }, label: 'Canvas', icon: Frame },
   { view: { name: 'vault' }, label: 'Vault', icon: KeyRound },
   { view: { name: 'jobs' }, label: 'Jobs', icon: ListChecks },
   { view: { name: 'media' }, label: 'Media', icon: Sparkles },
@@ -35,7 +37,7 @@ export function Rail({ view, onNavigate }: { view: View; onNavigate: (view: View
         type="button"
         className="rail-logo"
         onClick={() => onNavigate({ name: 'home' })}
-        aria-label="sosystem home"
+        aria-label="Mezze home"
       >
         <svg viewBox="0 0 32 32" width="21" height="21" aria-hidden="true">
           <g stroke="currentColor" strokeWidth="2" strokeLinecap="round">

@@ -1,8 +1,10 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowUp,
   Brain,
+  CalendarClock,
   Check,
+  ChevronDown,
   ChevronRight,
   Loader2,
   Paperclip,
@@ -16,7 +18,31 @@ import { cn } from '../lib/format'
 import { coerceToolArgs, toolFields } from '../lib/mcp'
 import { Field, Modal, Segmented } from './ui'
 
-export type ComposerMode = 'auto' | 'research' | 'write'
+export type ComposerMode = 'auto' | 'research' | 'write' | 'canvas'
+
+const HOUR = 60 * 60 * 1000
+
+function tomorrowNine(): number {
+  const date = new Date()
+  date.setDate(date.getDate() + 1)
+  date.setHours(9, 0, 0, 0)
+  return date.getTime()
+}
+
+function clockLabel(at: number): string {
+  const date = new Date(at)
+  const today = new Date()
+  const sameDay = date.toDateString() === today.toDateString()
+  return sameDay
+    ? date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : date.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+}
+
+function localInputValue(at: number): string {
+  const date = new Date(at)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
 
 export function Composer({
   variant = 'thread',
@@ -29,6 +55,7 @@ export function Composer({
   onThinkChange,
   agent,
   onSubmit,
+  onOpenIntegrations,
 }: {
   variant?: 'hero' | 'thread'
   placeholder?: string
@@ -39,7 +66,14 @@ export function Composer({
   think: boolean
   onThinkChange: (think: boolean) => void
   agent?: Agent
-  onSubmit: (text: string, attachments: string[], skills: Skill[], toolCalls: McpToolCall[]) => void
+  onSubmit: (
+    text: string,
+    attachments: string[],
+    skills: Skill[],
+    toolCalls: McpToolCall[],
+    scheduleAt?: number,
+  ) => void
+  onOpenIntegrations?: () => void
 }) {
   const { files, skills: allSkills, mcpServers, writeFile, notify, settings } = useStore()
   const [value, setValue] = useState('')
@@ -49,6 +83,11 @@ export function Composer({
   const [slash, setSlash] = useState<{ open: boolean; query: string }>({ open: false, query: '' })
   const [slashIndex, setSlashIndex] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [customOpen, setCustomOpen] = useState(false)
+  const [customAt, setCustomAt] = useState(() => localInputValue(Date.now() + HOUR))
+  const [scheduleError, setScheduleError] = useState<string | null>(null)
+  const scheduleRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -62,16 +101,33 @@ export function Composer({
         return !q || skill.slug.includes(q) || skill.name.toLowerCase().includes(q)
       })
     : []
+  const empty = !value.trim() && !toolCalls.length
 
-  const submit = () => {
+  useEffect(() => {
+    if (!scheduleOpen) return
+    const close = (event: MouseEvent) => {
+      if (!scheduleRef.current?.contains(event.target as Node)) setScheduleOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [scheduleOpen])
+
+  const submit = (scheduleAt?: number) => {
     const text = value.trim()
     if ((!text && !toolCalls.length) || disabled) return
-    onSubmit(text || 'Run the attached MCP tool and summarise the result.', attachments, selected, toolCalls)
+    onSubmit(
+      text || 'Run the attached MCP tool and summarise the result.',
+      attachments,
+      selected,
+      toolCalls,
+      scheduleAt,
+    )
     setValue('')
     setAttachments([])
     setSkillIds([])
     setToolCalls([])
     setSlash({ open: false, query: '' })
+    setScheduleOpen(false)
   }
 
   const attach = (file: File) => {
@@ -135,6 +191,16 @@ export function Composer({
     }
   }
 
+  const schedule = (at: number) => {
+    if (at <= Date.now() + 30_000) {
+      setScheduleError('Pick a time at least a minute from now.')
+      return
+    }
+    setScheduleError(null)
+    setCustomOpen(false)
+    submit(at)
+  }
+
   return (
     <div className={cn('composer', variant === 'hero' && 'composer-hero')}>
       {slash.open ? (
@@ -169,8 +235,13 @@ export function Composer({
             <p className="slash-empty">No skill matches “{slash.query}”. Add one in Skills.</p>
           )}
           <div className="slash-foot">
-            <span><kbd className="kbd">↑</kbd><kbd className="kbd">↓</kbd> choose</span>
-            <span><kbd className="kbd">↵</kbd> attach</span>
+            <span>
+              <kbd className="kbd">↑</kbd>
+              <kbd className="kbd">↓</kbd> choose
+            </span>
+            <span>
+              <kbd className="kbd">↵</kbd> attach
+            </span>
           </div>
         </div>
       ) : null}
@@ -271,8 +342,11 @@ export function Composer({
             className={cn('composer-icon', toolCalls.length > 0 && 'is-lit')}
             onClick={() => setPickerOpen(true)}
             aria-label="Attach an MCP tool call"
-            title="Attach an MCP tool call"
-            disabled={!mcpServers.some((server) => server.enabled && server.tools.length)}
+            title={
+              mcpServers.some((server) => server.enabled && server.tools.length)
+                ? 'Attach an MCP tool call'
+                : 'Set up an MCP server in Integrations'
+            }
           >
             <Plug size={12} />
           </button>
@@ -285,6 +359,7 @@ export function Composer({
               { value: 'auto', label: 'Auto' },
               { value: 'research', label: 'Research' },
               { value: 'write', label: 'Write' },
+              { value: 'canvas', label: 'Canvas' },
             ]}
           />
 
@@ -306,15 +381,65 @@ export function Composer({
             <span className="faint">·</span>
             <span className="mono">{settings.s2Model}</span>
           </span>
-          <button
-            type="button"
-            className="send-btn"
-            onClick={submit}
-            disabled={(!value.trim() && !toolCalls.length) || disabled}
-            aria-label="Send"
-          >
-            <ArrowUp size={16} strokeWidth={2.4} />
-          </button>
+
+          <div className="send-group" ref={scheduleRef}>
+            <button
+              type="button"
+              className="send-btn"
+              onClick={() => submit()}
+              disabled={empty || disabled}
+              aria-label="Send"
+            >
+              <ArrowUp size={16} strokeWidth={2.4} />
+            </button>
+            <button
+              type="button"
+              className={cn('send-caret', scheduleOpen && 'is-open')}
+              onClick={() => setScheduleOpen((open) => !open)}
+              disabled={empty || disabled}
+              aria-label="Schedule send"
+              aria-haspopup="menu"
+              aria-expanded={scheduleOpen}
+              title="Schedule send"
+            >
+              <ChevronDown size={12} />
+            </button>
+
+            {scheduleOpen ? (
+              <div className="send-menu" role="menu" aria-label="Schedule send">
+                <p className="send-menu-head">
+                  <CalendarClock size={11} /> Schedule send
+                </p>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => schedule(Date.now() + 15 * 60 * 1000)}
+                >
+                  In 15 minutes <span className="mono">{clockLabel(Date.now() + 15 * 60 * 1000)}</span>
+                </button>
+                <button type="button" role="menuitem" onClick={() => schedule(Date.now() + HOUR)}>
+                  In 1 hour <span className="mono">{clockLabel(Date.now() + HOUR)}</span>
+                </button>
+                <button type="button" role="menuitem" onClick={() => schedule(tomorrowNine())}>
+                  Tomorrow at 9:00 <span className="mono">{clockLabel(tomorrowNine())}</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="send-menu-custom"
+                  onClick={() => {
+                    setCustomAt(localInputValue(Date.now() + HOUR))
+                    setScheduleError(null)
+                    setScheduleOpen(false)
+                    setCustomOpen(true)
+                  }}
+                >
+                  Pick a time… <ChevronRight size={11} />
+                </button>
+                <p className="send-menu-foot">Sends while Mezze is open.</p>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -333,7 +458,49 @@ export function Composer({
           setToolCalls((prev) => [...prev, call])
           setPickerOpen(false)
         }}
+        onOpenIntegrations={onOpenIntegrations}
       />
+
+      <Modal
+        open={customOpen}
+        onClose={() => setCustomOpen(false)}
+        title="Schedule send"
+        subtitle="The message is queued in this workspace and sent while Mezze is open."
+        width={440}
+        footer={
+          <>
+            <button type="button" className="btn btn-quiet" onClick={() => setCustomOpen(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                const at = new Date(customAt).getTime()
+                if (Number.isNaN(at)) {
+                  setScheduleError('That time does not parse.')
+                  return
+                }
+                schedule(at)
+              }}
+            >
+              <CalendarClock size={12} /> Schedule
+            </button>
+          </>
+        }
+      >
+        <Field label="Send at" htmlFor="schedule-at">
+          <input
+            id="schedule-at"
+            className="input"
+            type="datetime-local"
+            value={customAt}
+            min={localInputValue(Date.now() + 60_000)}
+            onChange={(event) => setCustomAt(event.target.value)}
+          />
+        </Field>
+        {scheduleError ? <p className="field-error">{scheduleError}</p> : null}
+      </Modal>
     </div>
   )
 }
@@ -343,21 +510,28 @@ function ToolPicker({
   onClose,
   servers,
   onAttach,
+  onOpenIntegrations,
 }: {
   open: boolean
   onClose: () => void
   servers: McpServer[]
   onAttach: (call: McpToolCall) => void
+  onOpenIntegrations?: () => void
 }) {
   const usable = servers.filter((server) => server.enabled && server.tools.length)
   const [serverId, setServerId] = useState(usable[0]?.id ?? '')
   const [toolName, setToolName] = useState('')
+  const [query, setQuery] = useState('')
   const [args, setArgs] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
 
   const server = usable.find((item) => item.id === serverId) ?? usable[0]
   const tool = server?.tools.find((item) => item.name === toolName)
   const fields = tool ? toolFields(tool) : []
+  const tools = (server?.tools ?? []).filter((item) => {
+    const q = query.trim().toLowerCase()
+    return !q || item.name.toLowerCase().includes(q) || (item.description ?? '').toLowerCase().includes(q)
+  })
 
   const attach = () => {
     if (!server || !tool) return
@@ -369,6 +543,7 @@ function ToolPicker({
     setError(null)
     onAttach({ serverId: server.id, serverName: server.name, tool: tool.name, args: parsed })
     setToolName('')
+    setQuery('')
     setArgs({})
   }
 
@@ -378,7 +553,7 @@ function ToolPicker({
       onClose={onClose}
       title="Attach an MCP tool call"
       subtitle="The Worker runs this before the turn and hands the result to System 2."
-      width={560}
+      width={580}
       footer={
         <>
           <button type="button" className="btn btn-quiet" onClick={onClose}>
@@ -391,9 +566,16 @@ function ToolPicker({
       }
     >
       {!usable.length ? (
-        <p className="inline-note">
-          <Plug size={12} /> No MCP server has tools yet. Add one in Integrations and refresh it.
-        </p>
+        <div className="inline-note">
+          <p>
+            <Plug size={12} /> No MCP server has tools yet. Add one in Integrations and refresh it.
+          </p>
+          {onOpenIntegrations ? (
+            <button type="button" className="btn btn-sm" onClick={onOpenIntegrations}>
+              Open Integrations <ChevronRight size={11} />
+            </button>
+          ) : null}
+        </div>
       ) : (
         <>
           <Field label="Server">
@@ -403,6 +585,7 @@ function ToolPicker({
               onChange={(event) => {
                 setServerId(event.target.value)
                 setToolName('')
+                setQuery('')
                 setArgs({})
                 setError(null)
               }}
@@ -415,24 +598,37 @@ function ToolPicker({
             </select>
           </Field>
 
-          <Field label="Tool">
-            <select
-              className="input mono"
-              value={toolName}
-              onChange={(event) => {
-                setToolName(event.target.value)
-                setArgs({})
-                setError(null)
-              }}
-            >
-              <option value="">Choose a tool…</option>
-              {(server?.tools ?? []).map((item) => (
-                <option key={item.name} value={item.name}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
+          <Field label="Tool" htmlFor="tool-search">
+            <input
+              id="tool-search"
+              className="input"
+              placeholder={`Search ${server?.tools.length ?? 0} tools…`}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
           </Field>
+
+          <div className="tool-list">
+            {tools.length ? (
+              tools.map((item) => (
+                <button
+                  key={item.name}
+                  type="button"
+                  className={cn('tool-list-item', item.name === toolName && 'is-active')}
+                  onClick={() => {
+                    setToolName(item.name)
+                    setArgs({})
+                    setError(null)
+                  }}
+                >
+                  <span className="mono">{item.name}</span>
+                  <span>{item.description || 'No description'}</span>
+                </button>
+              ))
+            ) : (
+              <p className="tiny faint">No tools match “{query}”.</p>
+            )}
+          </div>
 
           {tool?.description ? <p className="tool-picker-desc">{tool.description}</p> : null}
 

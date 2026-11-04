@@ -4,6 +4,7 @@ import {
   Bot,
   FileText,
   FolderClosed,
+  Frame,
   Home,
   KeyRound,
   ListChecks,
@@ -24,6 +25,7 @@ const pages: Array<{ name: View['name']; label: string; icon: typeof Home }> = [
   { name: 'home', label: 'Home', icon: Home },
   { name: 'chats', label: 'Chats', icon: MessagesSquare },
   { name: 'files', label: 'Files', icon: FolderClosed },
+  { name: 'canvas', label: 'Canvas', icon: Frame },
   { name: 'vault', label: 'Vault', icon: KeyRound },
   { name: 'jobs', label: 'Jobs', icon: ListChecks },
   { name: 'media', label: 'Media', icon: Sparkles },
@@ -162,7 +164,7 @@ export function CommandPalette({
         <footer className="palette-foot">
           <span><kbd className="kbd">↑</kbd><kbd className="kbd">↓</kbd> navigate</span>
           <span><kbd className="kbd">↵</kbd> open</span>
-          <span className="palette-foot-right">saved to D1 · ⌘K anywhere</span>
+          <span className="palette-foot-right">Mezze · saved to D1 · ⌘K anywhere</span>
         </footer>
       </div>
     </div>

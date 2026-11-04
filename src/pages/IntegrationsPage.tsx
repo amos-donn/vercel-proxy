@@ -4,10 +4,12 @@ import {
   CircleAlert,
   Loader2,
   Lock,
+  Pencil,
   Play,
   Plug,
   Plus,
   RefreshCw,
+  Search,
   ShieldCheck,
   Trash2,
   Unplug,
@@ -30,6 +32,7 @@ export function IntegrationsPage() {
   } = useStore()
 
   const [addOpen, setAddOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [transport, setTransport] = useState<McpTransport>('streamable-http')
@@ -43,11 +46,48 @@ export function IntegrationsPage() {
   const connected = mcpServers.filter((server) => server.status === 'connected')
   const toolCount = mcpServers.reduce((sum, server) => sum + server.toolsCount, 0)
 
+  const openAdd = () => {
+    setEditingId(null)
+    setName('')
+    setUrl('')
+    setTransport('streamable-http')
+    setAuth('')
+    setError(null)
+    setAddOpen(true)
+  }
+
+  const openEdit = (server: McpServer) => {
+    setEditingId(server.id)
+    setName(server.name)
+    setUrl(server.url)
+    setTransport(server.transport)
+    setAuth('')
+    setError(null)
+    setAddOpen(true)
+  }
+
   const create = async () => {
     if (!name.trim() || !url.trim()) return
     setBusy(true)
     setError(null)
     try {
+      if (editingId) {
+        const updated = await updateServer(editingId, {
+          name: name.trim(),
+          url: url.trim(),
+          transport,
+          ...(auth.trim() ? { auth: auth.trim() } : {}),
+        })
+        const server = await refreshServer(updated.id).catch(() => updated)
+        setAddOpen(false)
+        setEditingId(null)
+        setName('')
+        setUrl('')
+        setAuth('')
+        setSelectedId(server.id)
+        notify(`${server.name} updated · ${server.toolsCount} tools`)
+        return
+      }
       const server = await addServer({
         name: name.trim(),
         url: url.trim(),
@@ -97,7 +137,7 @@ export function IntegrationsPage() {
             discovers the tool list, and stores any bearer token encrypted beside your provider keys.
           </p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={() => setAddOpen(true)}>
+        <button type="button" className="btn btn-primary" onClick={openAdd}>
           <Plus size={13} /> Add MCP server
         </button>
       </header>
@@ -140,7 +180,7 @@ export function IntegrationsPage() {
             icon={<Plug size={18} />}
             title="No MCP servers yet"
             action={
-              <button type="button" className="btn btn-primary" onClick={() => setAddOpen(true)}>
+              <button type="button" className="btn btn-primary" onClick={openAdd}>
                 <Plus size={13} /> Connect one
               </button>
             }
@@ -184,22 +224,34 @@ export function IntegrationsPage() {
             .catch((caught: unknown) => notify(caught instanceof Error ? caught.message : 'Delete failed'))
         }}
         onCall={callTool}
+        onEdit={openEdit}
         notify={notify}
       />
 
       <Modal
         open={addOpen}
-        onClose={() => setAddOpen(false)}
-        title="Add an MCP server"
+        onClose={() => {
+          setAddOpen(false)
+          setEditingId(null)
+          setError(null)
+        }}
+        title={editingId ? 'Edit MCP server' : 'Add an MCP server'}
         subtitle="HTTPS only. Streamable HTTP is preferred; SSE servers still work."
         footer={
           <>
-            <button type="button" className="btn btn-quiet" onClick={() => setAddOpen(false)}>
+            <button
+              type="button"
+              className="btn btn-quiet"
+              onClick={() => {
+                setAddOpen(false)
+                setEditingId(null)
+              }}
+            >
               Cancel
             </button>
             <button type="button" className="btn btn-primary" disabled={busy || !name.trim() || !url.trim()} onClick={() => void create()}>
-              {busy ? <Loader2 size={12} className="spin" /> : <Plug size={12} />}
-              {busy ? 'Discovering…' : 'Add and discover'}
+              {busy ? <Loader2 size={12} className="spin" /> : editingId ? <Pencil size={12} /> : <Plug size={12} />}
+              {busy ? 'Discovering…' : editingId ? 'Save and rediscover' : 'Add and discover'}
             </button>
           </>
         }
@@ -250,6 +302,7 @@ function ServerDetail({
   onToggle,
   onDelete,
   onCall,
+  onEdit,
   notify,
 }: {
   server: McpServer | undefined
@@ -259,9 +312,11 @@ function ServerDetail({
   onToggle: (enabled: boolean) => void
   onDelete: () => void
   onCall: (id: string, tool: string, args: Record<string, unknown>) => Promise<{ content: string }>
+  onEdit: (server: McpServer) => void
   notify: (message: string) => void
 }) {
   const [toolName, setToolName] = useState('')
+  const [query, setQuery] = useState('')
   const [args, setArgs] = useState<Record<string, string>>({})
   const [output, setOutput] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
@@ -324,6 +379,11 @@ function ServerDetail({
                 <Trash2 size={12} /> Remove
               </button>
             )}
+            {!confirmDelete ? (
+              <button type="button" className="btn btn-quiet" onClick={() => server && onEdit(server)}>
+                <Pencil size={12} /> Edit
+              </button>
+            ) : null}
             <span className="grow" />
             <button type="button" className="btn" disabled={refreshing} onClick={() => server && void onRefresh(server)}>
               {refreshing ? <Loader2 size={12} className="spin" /> : <RefreshCw size={12} />} Refresh tools
@@ -357,25 +417,49 @@ function ServerDetail({
           <h4 className="modal-section-title">Discovered tools</h4>
           {server.tools.length ? (
             <>
-              <Field label="Tool">
-                <select
-                  className="input mono"
-                  value={toolName}
-                  onChange={(event) => {
-                    setToolName(event.target.value)
-                    setArgs({})
-                    setOutput(null)
-                    setError(null)
-                  }}
-                >
-                  <option value="">Choose a tool…</option>
-                  {server.tools.map((item) => (
-                    <option key={item.name} value={item.name}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
+              <Field label="Tool" htmlFor="detail-tool-search">
+                <div className="tool-search">
+                  <Search size={12} />
+                  <input
+                    id="detail-tool-search"
+                    className="input"
+                    value={query}
+                    placeholder={`Search ${server.tools.length} tools…`}
+                    onChange={(event) => setQuery(event.target.value)}
+                  />
+                </div>
               </Field>
+              <div className="tool-list">
+                {server.tools
+                  .filter((item) => {
+                    const q = query.trim().toLowerCase()
+                    return (
+                      !q ||
+                      item.name.toLowerCase().includes(q) ||
+                      (item.description ?? '').toLowerCase().includes(q)
+                    )
+                  })
+                  .map((item) => (
+                    <button
+                      key={item.name}
+                      type="button"
+                      className={cn('tool-list-item', item.name === toolName && 'is-active')}
+                      onClick={() => {
+                        setToolName(item.name)
+                        setArgs({})
+                        setOutput(null)
+                        setError(null)
+                      }}
+                    >
+                      <span className="mono">{item.name}</span>
+                      <span>{item.description || 'No description'}</span>
+                    </button>
+                  ))}
+                {!server.tools.some((item) => {
+                  const q = query.trim().toLowerCase()
+                  return !q || item.name.toLowerCase().includes(q) || (item.description ?? '').toLowerCase().includes(q)
+                }) ? <p className="tiny faint">No tools match “{query}”.</p> : null}
+              </div>
               {tool?.description ? <p className="tool-picker-desc">{tool.description}</p> : null}
               {fields.map((field) => (
                 <Field key={field.name} label={`${field.name}${field.required ? ' *' : ''}`} hint={field.description}>

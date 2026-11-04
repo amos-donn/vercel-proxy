@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   Brain,
+  CalendarClock,
   Check,
   ChevronDown,
   ChevronRight,
@@ -11,6 +12,7 @@ import {
   Download,
   ExternalLink,
   FileText,
+  Frame,
   Loader2,
   MessageSquarePlus,
   Pin,
@@ -37,7 +39,6 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
   const [think, setThink] = useState(false)
   const [sideTab, setSideTab] = useState<'overview' | 'plan' | 'artifacts'>('overview')
   const [busy, setBusy] = useState(false)
-  const started = useRef(false)
   const alive = useRef(true)
 
   const agent = store.agents.find((item) => item.id === chat?.agentId)
@@ -54,17 +55,25 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
   }, [])
 
   useEffect(() => {
-    if (!chat || started.current) return
-    const queued = store.takeQueuedPrompt(chat.id)
-    if (!queued) return
-    started.current = true
-    const force = Boolean(chat.tags?.includes('force-s2') || chat.tags?.includes('think'))
-    const picked = queued.skillIds
-      .map((id) => store.skills.find((skill) => skill.id === id))
-      .filter((skill): skill is Skill => Boolean(skill))
-    void run(queued.text, force, picked, queued.toolCalls)
+    const tags = chat?.tags ?? []
+    setMode(tags.includes('canvas') ? 'canvas' : tags.includes('write') ? 'write' : tags.includes('research') ? 'research' : 'auto')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat?.id])
+
+  const scheduledHere = chat ? store.scheduled.filter((item) => item.chatId === chat.id) : []
+  const queued = chat ? store.queuePrompt[chat.id] : undefined
+
+  useEffect(() => {
+    if (!chat || !queued || busy) return
+    const item = store.takeQueuedPrompt(chat.id)
+    if (!item) return
+    const force = Boolean(chat.tags?.includes('force-s2') || chat.tags?.includes('think'))
+    const picked = item.skillIds
+      .map((id) => store.skills.find((skill) => skill.id === id))
+      .filter((skill): skill is Skill => Boolean(skill))
+    void run(item.text, force, picked, item.toolCalls)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat?.id, queued, busy])
 
   const stats = useMemo(() => {
     const traces = chat?.messages.filter(
@@ -177,6 +186,7 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
         fileCount: store.files.length,
         runningJobs: store.jobs.filter((job) => job.state !== 'succeeded').length,
         forceSystem2: force || mode !== 'auto' || evidence.length > 0,
+        canvasRequested: mode === 'canvas' || Boolean(chat.tags?.includes('canvas')),
         thresholds: store.settings.thresholds,
         s2Model: store.settings.s2Model,
         runtime: store.settings.runtime,
@@ -241,6 +251,19 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
         })
         store.patchChat(chat.id, { status: 'waiting' })
         return
+      }
+
+      if (result.canvas) {
+        const canvas = store.addCanvas({ ...result.canvas, origin: 'agent', chatId: chat.id })
+        append({
+          id: uid('m'),
+          kind: 'artifact',
+          name: canvas.name,
+          type: 'Canvas',
+          meta: 'sandboxed preview · open, edit and run',
+          target: 'canvas',
+          canvasId: canvas.id,
+        })
       }
 
       if (result.artifact) {
@@ -417,6 +440,27 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
           </div>
 
           <div className="composer-dock">
+            {scheduledHere.length ? (
+              <div className="scheduled-strip">
+                <CalendarClock size={11} />
+                {scheduledHere.map((item) => (
+                  <span key={item.id} className="scheduled-chip" title={item.text}>
+                    {new Date(item.sendAt).toLocaleString([], {
+                      weekday: 'short',
+                      hour: 'numeric',
+                      minute: '2-digit',
+                    })}
+                    <button
+                      type="button"
+                      aria-label="Cancel scheduled send"
+                      onClick={() => store.cancelScheduled(item.id)}
+                    >
+                      <X size={10} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
             {pendingApproval ? (
               <div className="gate-hint">
                 <ShieldAlert size={13} /> Waiting on you: {pendingApproval.title}
@@ -436,9 +480,23 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
                     ? 'The agent is working…'
                     : 'Ask a follow-up, or force System 2 with Think harder'
               }
-              onSubmit={(text, _attachments, skills, toolCalls) =>
+              onSubmit={(text, _attachments, skills, toolCalls, scheduleAt) => {
+                if (scheduleAt) {
+                  store.scheduleSend({
+                    chatId: chat.id,
+                    text,
+                    skillIds: skills.map((skill) => skill.id),
+                    toolCalls,
+                    sendAt: scheduleAt,
+                  })
+                  store.notify(
+                    `Scheduled for ${new Date(scheduleAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`,
+                  )
+                  return
+                }
                 void run(text, think, skills, toolCalls)
-              }
+              }}
+              onOpenIntegrations={() => onNavigate({ name: 'integrations' })}
             />
             <p className="dock-note">
               <span className="dot" /> {store.settings.runtime === 'simulated' ? 'simulated runtime' : 'live worker'} ·
@@ -536,7 +594,13 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
                         key={artifact.id}
                         type="button"
                         className="side-artifact"
-                        onClick={() => onNavigate({ name: artifact.target === 'media' ? 'media' : 'files' })}
+                        onClick={() =>
+                          onNavigate(
+                            artifact.target === 'canvas'
+                              ? { name: 'canvas', path: artifact.canvasId }
+                              : { name: artifact.target === 'media' ? 'media' : 'files' },
+                          )
+                        }
                       >
                         <FileText size={13} />
                         <span>
@@ -660,8 +724,20 @@ function MessageView({
       )
     case 'artifact':
       return (
-        <button type="button" className="artifact" onClick={() => onNavigate({ name: message.target === 'media' ? 'media' : 'files' })}>
-          <span className="artifact-icon"><FileText size={14} /></span>
+        <button
+          type="button"
+          className="artifact"
+          onClick={() =>
+            onNavigate(
+              message.target === 'canvas'
+                ? { name: 'canvas', path: message.canvasId }
+                : { name: message.target === 'media' ? 'media' : 'files' },
+            )
+          }
+        >
+          <span className="artifact-icon">
+            {message.target === 'canvas' ? <Frame size={14} /> : <FileText size={14} />}
+          </span>
           <span className="artifact-copy">
             <span className="artifact-name">{message.name}</span>
             <span className="artifact-meta">{message.type} · {message.meta}</span>

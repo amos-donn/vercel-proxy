@@ -1,4 +1,4 @@
-# sosystem — architecture
+# Mezze — architecture
 
 Two layers exist in this repository:
 
@@ -101,7 +101,7 @@ This is the seam a D1-backed repository will replace. Components never write sto
 ### `GET /api/health`
 
 ```json
-{ "ok": true, "service": "sosystem", "version": "0.2.0",
+{ "ok": true, "service": "mezze", "version": "0.4.0",
   "jev": true, "system2": false, "now": 1760000000000 }
 ```
 

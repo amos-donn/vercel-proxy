@@ -1,4 +1,4 @@
-# sosystem
+# Mezze
 
 A **bring-your-own-key agent workspace** with two brains:
 

@@ -1,10 +1,11 @@
-/** Shared domain model for the sosystem workspace. */
+/** Shared domain model for the Mezze workspace. */
 
 export type Tone = 'lime' | 'blue' | 'violet' | 'amber' | 'red' | 'neutral'
 export type ViewName =
   | 'home'
   | 'chats'
   | 'files'
+  | 'canvas'
   | 'vault'
   | 'jobs'
   | 'media'
@@ -150,8 +151,9 @@ export type ChatMessage =
       name: string
       type: string
       meta: string
-      target?: 'files' | 'media'
+      target?: 'files' | 'media' | 'canvas'
       content?: string
+      canvasId?: string
     }
   | { id: string; kind: 'notice'; text: string }
 
@@ -361,12 +363,43 @@ export interface McpServer {
 export interface WorkspaceSnapshot {
   chats: Chat[]
   files: WorkspaceFile[]
+  canvases: Canvas[]
   jobs: Job[]
   media: MediaItem[]
   automations: Automation[]
   agents: Agent[]
   skills: Skill[]
+  scheduled: ScheduledSend[]
   settings: Settings
+}
+
+export interface Canvas {
+  id: string
+  name: string
+  description: string
+  html: string
+  css: string
+  js: string
+  origin: 'agent' | 'user'
+  updatedAt: number
+  chatId?: string
+}
+
+export interface CanvasDraft {
+  name: string
+  description: string
+  html: string
+  css: string
+  js: string
+}
+
+export interface ScheduledSend {
+  id: string
+  chatId: string | null
+  text: string
+  skillIds: string[]
+  toolCalls: McpToolCall[]
+  sendAt: number
 }
 
 /* ------------------------------------------------------------------ *

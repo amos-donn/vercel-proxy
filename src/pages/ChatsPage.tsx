@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ArrowRight, MessagesSquare, Pin, Search } from 'lucide-react'
+import { ArrowRight, CalendarClock, MessagesSquare, Pin, Search, X } from 'lucide-react'
 import { useStore } from '../store'
 import type { View } from '../types'
 import { Chip, Segmented, StatusPill } from '../components/ui'
@@ -7,7 +7,7 @@ import { Chip, Segmented, StatusPill } from '../components/ui'
 type Filter = 'all' | 'pinned' | 'waiting'
 
 export function ChatsPage({ onNavigate }: { onNavigate: (view: View) => void }) {
-  const { chats } = useStore()
+  const { chats, scheduled, cancelScheduled } = useStore()
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
 
@@ -61,6 +61,42 @@ export function ChatsPage({ onNavigate }: { onNavigate: (view: View) => void }) 
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter threads" />
         </label>
       </div>
+
+      {scheduled.length ? (
+        <section className="panel scheduled-panel">
+          <header className="scheduled-panel-head">
+            <span>
+              <CalendarClock size={13} /> Scheduled sends
+            </span>
+            <span className="mono tiny faint">{scheduled.length} queued</span>
+          </header>
+          {scheduled.map((item) => {
+            const target = chats.find((chat) => chat.id === item.chatId)
+            return (
+              <div key={item.id} className="scheduled-row">
+                <span className="scheduled-time mono">
+                  {new Date(item.sendAt).toLocaleString([], {
+                    weekday: 'short',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })}
+                </span>
+                <span className="scheduled-text">{item.text.slice(0, 110)}</span>
+                <span className="tiny faint">{target ? target.title : 'new chat'}</span>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={() => cancelScheduled(item.id)}
+                  aria-label="Cancel scheduled send"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )
+          })}
+          <p className="scheduled-foot">Queued messages send while Mezze is open, then appear in their chat.</p>
+        </section>
+      ) : null}
 
       <div className="panel chat-table">
         {rows.map((chat) => (

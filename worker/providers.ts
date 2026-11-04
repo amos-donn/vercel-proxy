@@ -243,8 +243,8 @@ export async function health(env: Env, userId?: string): Promise<Record<string, 
   const configured = (id: string) => Boolean(inventory.providers[id]?.configured)
   return {
     ok: true,
-    service: 'sosystem',
-    version: '0.3.0',
+    service: 'mezze',
+    version: '0.4.0',
     authenticated: Boolean(userId),
     jev: configured('typesafe'),
     system2: providers.some((provider) => provider.kind === 'system2' && configured(provider.id)),
@@ -279,9 +279,18 @@ export async function jevAnswer(env: Env, userId: string, body: Record<string, u
   return Array.isArray(payload.answers) ? payload.answers : []
 }
 
+export interface System2Canvas {
+  name: string
+  description: string
+  html: string
+  css: string
+  js: string
+}
+
 export interface System2Result {
   plan: string[]
   prose: string
+  canvas?: System2Canvas
   model: string
   provider: ProviderId
   usage: { promptTokens: number; completionTokens: number; cost: number }
@@ -314,6 +323,15 @@ export async function system2(env: Env, userId: string, body: Record<string, unk
     })
     .map((message) => ({ role: message.role, content: message.content.slice(0, MAX_MESSAGE_CHARS) }))
   if (!messages.length) throw new ApiError(400, 'empty_messages', 'At least one message is required.')
+
+  const wantsCanvas = body.canvas === true
+  if (wantsCanvas) {
+    messages.push({
+      role: 'system',
+      content:
+        'Also return "canvas": { name, description, html, css, js }. It must be a complete, self-contained, responsive page using only HTML, CSS and vanilla JS — no external libraries, no storage APIs, no network calls. Make it genuinely interactive.',
+    })
+  }
 
   const completion = await complete(env, provider, key, model, messages)
   const parsed = parseStructured(completion.text)
@@ -414,7 +432,7 @@ async function complete(
       'content-type': 'application/json',
       authorization: `Bearer ${key}`,
       ...(provider === 'openrouter'
-        ? { 'HTTP-Referer': 'https://sosystem.amos-donn.workers.dev', 'X-Title': 'sosystem' }
+        ? { 'HTTP-Referer': 'https://sosystem.amos-donn.workers.dev', 'X-Title': 'Mezze' }
         : {}),
     },
     body: JSON.stringify({
@@ -447,17 +465,31 @@ function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4))
 }
 
-function parseStructured(text: string): { plan: string[]; prose: string } {
+function parseStructured(text: string): { plan: string[]; prose: string; canvas?: System2Canvas } {
   let plan: string[] = []
   let prose = text.trim()
+  let canvas: System2Canvas | undefined
   try {
-    const parsed = JSON.parse(text) as { plan?: unknown; prose?: unknown }
+    const parsed = JSON.parse(text) as { plan?: unknown; prose?: unknown; canvas?: unknown }
     if (Array.isArray(parsed.plan)) {
       plan = parsed.plan.filter((step): step is string => typeof step === 'string').slice(0, 12)
     }
     if (typeof parsed.prose === 'string' && parsed.prose.trim()) prose = parsed.prose.trim()
+    const raw = parsed.canvas
+    if (raw && typeof raw === 'object') {
+      const row = raw as Record<string, unknown>
+      if (typeof row.html === 'string' && row.html.trim()) {
+        canvas = {
+          name: (typeof row.name === 'string' ? row.name : 'Canvas').slice(0, 64),
+          description: (typeof row.description === 'string' ? row.description : '').slice(0, 300),
+          html: row.html.slice(0, 120_000),
+          css: (typeof row.css === 'string' ? row.css : '').slice(0, 120_000),
+          js: (typeof row.js === 'string' ? row.js : '').slice(0, 120_000),
+        }
+      }
+    }
   } catch {
     // A non-JSON completion is still usable prose.
   }
-  return { plan, prose }
+  return { plan, prose, ...(canvas ? { canvas } : {}) }
 }

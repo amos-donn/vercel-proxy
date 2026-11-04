@@ -12,6 +12,8 @@ import {
   type SimInput,
 } from './jev'
 import { planSteps, simulateSystem2 } from './system2'
+import { simulateCanvas, wantsCanvas } from './canvas'
+import type { CanvasDraft } from '../types'
 
 export interface TurnTool {
   name: string
@@ -36,7 +38,8 @@ export interface TurnResult {
   approval?: TurnApproval
   plan?: PlanStep[]
   assistant: { system: 's1' | 's2'; text: string; template?: boolean }
-  artifact?: { name: string; type: string; meta: string; content?: string; target?: 'files' | 'media' }
+  artifact?: { name: string; type: string; meta: string; content?: string; target?: 'files' | 'media' | 'canvas' }
+  canvas?: CanvasDraft
   job?: { title: string; provider: string; kind: 'transcribe' | 'sync' | 'crawl' | 'export'; detail: string; mediaId?: string }
   media?: { name: string; kind: 'video' | 'audio'; durationSec: number; sizeMb: number }
   notice?: string
@@ -60,6 +63,7 @@ export interface TurnInput {
   fileCount: number
   runningJobs: number
   forceSystem2: boolean
+  canvasRequested?: boolean
   thresholds: Thresholds
   s2Model: string
   runtime: 'simulated' | 'live'
@@ -163,10 +167,14 @@ function simulatedTurn(input: TurnInput): TurnResult {
     template: decision === 'respond' ? templateReply({ goal: input.goal, files: input.files, runningJobs: input.runningJobs, forceSystem2: false }) : undefined,
   })
 
+  const canvasWanted = Boolean(input.canvasRequested) || wantsCanvas(input.goal)
+
   // System 1 can only answer from templates or fixed slots. Anything that
   // needs composed prose goes to System 2, even when routing accepted S1.
   const needsProse =
-    (decision !== 'respond' && decision !== 'search_files') || Boolean(input.evidence?.length)
+    (decision !== 'respond' && decision !== 'search_files') ||
+    Boolean(input.evidence?.length) ||
+    canvasWanted
   if (signal.route === 's1' && needsProse) {
     trace.route = 's2'
     trace.escalation = {
@@ -194,6 +202,17 @@ function simulatedTurn(input: TurnInput): TurnResult {
     trace.escalation.s2.costUsd = s2.costUsd
     trace.escalation.s2.latencyMs = s2.latencyMs
     trace.savedUsd = trace.s1.costUsd + s2.costUsd - trace.baselineUsd
+  }
+
+  if (canvasWanted) {
+    return {
+      trace,
+      tools,
+      plan: planFor(input.goal),
+      assistant: { system: 's2', text: s2.prose },
+      canvas: simulateCanvas(input.goal),
+      live: false,
+    }
   }
 
   if (decision === 'write_file') {
@@ -284,12 +303,21 @@ async function liveTurn(input: TurnInput): Promise<TurnResult> {
   let prose = ''
   let plan: PlanStep[] = []
   let cost = 0.03
-  if (signal.route === 's2' || needs >= input.thresholds.escalate || Boolean(input.evidence?.length)) {
+  let canvas: CanvasDraft | undefined
+  const canvasWanted = Boolean(input.canvasRequested) || wantsCanvas(input.goal)
+
+  if (
+    signal.route === 's2' ||
+    needs >= input.thresholds.escalate ||
+    Boolean(input.evidence?.length) ||
+    canvasWanted
+  ) {
     const completion = await fetch('/api/system2', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         model: input.s2Model,
+        canvas: canvasWanted,
         messages: [
           { role: 'system', content: systemPrompt(input) },
           { role: 'user', content: input.goal },
@@ -297,10 +325,27 @@ async function liveTurn(input: TurnInput): Promise<TurnResult> {
       }),
     })
     if (!completion.ok) throw new Error(`System 2 ${completion.status}`)
-    const body = (await completion.json()) as { plan?: string[]; prose?: string; usage?: { cost?: number } }
+    const body = (await completion.json()) as {
+      plan?: string[]
+      prose?: string
+      canvas?: { name?: string; description?: string; html?: string; css?: string; js?: string }
+      usage?: { cost?: number }
+    }
     prose = body.prose ?? ''
     plan = (body.plan ?? []).map((label, i) => ({ id: `p${i}`, label, status: i === 0 ? 'done' : 'pending' }))
     cost = body.usage?.cost ?? cost
+    if (canvasWanted) {
+      const raw = body.canvas
+      canvas = raw && typeof raw.html === 'string'
+        ? {
+            name: String(raw.name ?? 'Canvas').slice(0, 64),
+            description: String(raw.description ?? '').slice(0, 300),
+            html: raw.html.slice(0, 120_000),
+            css: String(raw.css ?? '').slice(0, 120_000),
+            js: String(raw.js ?? '').slice(0, 120_000),
+          }
+        : simulateCanvas(input.goal)
+    }
   }
 
   const trace = makeTrace({
@@ -317,13 +362,19 @@ async function liveTurn(input: TurnInput): Promise<TurnResult> {
     tools: [],
     plan: plan.length ? plan : undefined,
     assistant: { system: trace.route === 's2' ? 's2' : 's1', text: prose || 'Live decision accepted.' },
+    canvas,
     live: true,
     notice: `Live runtime · confidence ${confidence.toFixed(2)} · decision ${decision}`,
   }
 }
 
 function systemPrompt(input: TurnInput): string {
-  const lines = ['You are System 2 in sosystem. Return JSON { plan: string[], prose: string }.']
+  const lines = ['You are System 2 in Mezze. Return JSON { plan: string[], prose: string }.']
+  if (input.canvasRequested) {
+    lines.push(
+      'Also include "canvas": { name, description, html, css, js }. It is a complete, self-contained page shown in a sandboxed iframe. Use only HTML, CSS and vanilla JS; no external libraries or storage APIs. Make it responsive and interactive.',
+    )
+  }
   if (input.skills?.length) {
     lines.push('', 'Active skills:')
     for (const skill of input.skills) lines.push(`- ${skill.name}: ${skill.prompt}`)

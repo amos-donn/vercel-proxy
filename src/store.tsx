@@ -16,6 +16,8 @@ import type {
   ApiKeyMeta,
   ApprovalPosture,
   Automation,
+  Canvas,
+  CanvasDraft,
   Chat,
   ChatMessage,
   Job,
@@ -29,6 +31,7 @@ import type {
   Provider,
   ProviderStatus,
   Quota,
+  ScheduledSend,
   SessionUser,
   Settings,
   Skill,
@@ -65,6 +68,8 @@ interface StoreValue {
   /* workspace */
   chats: Chat[]
   files: WorkspaceFile[]
+  canvases: Canvas[]
+  scheduled: ScheduledSend[]
   jobs: Job[]
   media: MediaItem[]
   automations: Automation[]
@@ -94,6 +99,19 @@ interface StoreValue {
   removeServer: (id: string) => Promise<void>
   refreshServer: (id: string) => Promise<McpServer>
   callTool: (id: string, tool: string, args: Record<string, unknown>) => Promise<McpCallResult>
+
+  /* canvas + scheduled sends */
+  addCanvas: (draft: CanvasDraft & { origin?: 'agent' | 'user'; chatId?: string }) => Canvas
+  patchCanvas: (id: string, patch: Partial<Canvas>) => void
+  deleteCanvas: (id: string) => void
+  scheduleSend: (input: {
+    chatId: string | null
+    text: string
+    skillIds?: string[]
+    toolCalls?: McpToolCall[]
+    sendAt: number
+  }) => ScheduledSend
+  cancelScheduled: (id: string) => void
 
   /* workspace mutations */
   notify: (message: string) => void
@@ -159,6 +177,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [automations, setAutomations] = useState<Automation[]>([])
   const [agents, setAgents] = useState<Agent[]>(() => defaultWorkspace().agents)
   const [skills, setSkills] = useState<Skill[]>(() => defaultSkills.map((item) => ({ ...item })))
+  const [canvases, setCanvases] = useState<Canvas[]>(() => defaultWorkspace().canvases)
+  const [scheduled, setScheduled] = useState<ScheduledSend[]>([])
   const [settings, setSettings] = useState<Settings>(() => defaultWorkspace().settings)
 
   const [keys, setKeys] = useState<ApiKeyMeta[]>([])
@@ -187,6 +207,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setAutomations(Array.isArray(raw.automations) ? raw.automations : base.automations)
     setAgents(Array.isArray(raw.agents) && raw.agents.length ? raw.agents : base.agents)
     setSkills(Array.isArray(raw.skills) ? raw.skills : base.skills)
+    setCanvases(Array.isArray(raw.canvases) ? raw.canvases : base.canvases)
+    setScheduled(Array.isArray(raw.scheduled) ? raw.scheduled : [])
     const incoming = (raw.settings ?? {}) as Partial<Settings>
     setSettings({
       ...base.settings,
@@ -204,6 +226,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setAutomations(base.automations)
     setAgents(base.agents)
     setSkills(base.skills)
+    setCanvases(base.canvases)
+    setScheduled([])
     setSettings(base.settings)
     setQueuePrompt({})
     setSaveState('idle')
@@ -266,11 +290,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   /* Persist the serializable workspace on a short debounce. */
   const snapshot = useMemo<WorkspaceSnapshot>(
-    () => ({ chats, files, jobs, media, automations, agents, skills, settings }),
-    [chats, files, jobs, media, automations, agents, skills, settings],
+    () => ({ chats, files, canvases, scheduled, jobs, media, automations, agents, skills, settings }),
+    [chats, files, canvases, scheduled, jobs, media, automations, agents, skills, settings],
   )
   const snapshotRef = useRef(snapshot)
   snapshotRef.current = snapshot
+  const chatsRef = useRef(chats)
+  chatsRef.current = chats
+  const firing = useRef<Set<string>>(new Set())
 
   const saveNow = useCallback(async () => {
     if (!hydrated.current) return
@@ -410,6 +437,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   )
 
+  /* Scheduled sends fire while an account is signed in. */
+  useEffect(() => {
+    if (status !== 'authed') return
+    const fire = () => {
+      const now = Date.now()
+      const due = scheduled.filter((item) => item.sendAt <= now && !firing.current.has(item.id))
+      if (!due.length) return
+      due.forEach((item) => firing.current.add(item.id))
+      setScheduled((prev) => prev.filter((item) => !due.some((pending) => pending.id === item.id)))
+      for (const item of due) {
+        const exists = Boolean(item.chatId && chatsRef.current.some((chat) => chat.id === item.chatId))
+        const chatId = item.chatId
+        if (exists && chatId) {
+          setQueuePrompt((prev) => ({
+            ...prev,
+            [chatId]: { text: item.text, skillIds: item.skillIds, toolCalls: item.toolCalls },
+          }))
+        } else {
+          const id = createChat(item.text, 'forge', item.skillIds, item.toolCalls)
+          setChats((prev) => prev.map((chat) => (chat.id === id ? { ...chat, status: 'idle' } : chat)))
+        }
+        notify('Scheduled message sent')
+        window.setTimeout(() => firing.current.delete(item.id), 4000)
+      }
+    }
+    fire()
+    const timer = window.setInterval(fire, 15000)
+    return () => window.clearInterval(timer)
+  }, [status, scheduled, createChat, notify])
+
   const patchChat = useCallback((id: string, patch: Partial<Chat>) => {
     setChats((prev) => prev.map((chat) => (chat.id === id ? { ...chat, ...patch } : chat)))
   }, [])
@@ -542,6 +599,59 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setSkills((prev) => prev.filter((item) => item.id !== id))
   }, [])
 
+  /* Canvases */
+  const addCanvas = useCallback((draft: CanvasDraft & { origin?: 'agent' | 'user'; chatId?: string }) => {
+    const canvas: Canvas = {
+      id: `canvas_${Math.random().toString(36).slice(2, 9)}`,
+      name: draft.name.trim() || 'Untitled canvas',
+      description: draft.description.trim(),
+      html: draft.html,
+      css: draft.css,
+      js: draft.js,
+      origin: draft.origin ?? 'user',
+      updatedAt: Date.now(),
+      ...(draft.chatId ? { chatId: draft.chatId } : {}),
+    }
+    setCanvases((prev) => [canvas, ...prev])
+    return canvas
+  }, [])
+
+  const patchCanvas = useCallback((id: string, patch: Partial<Canvas>) => {
+    setCanvases((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...patch, updatedAt: Date.now() } : item)),
+    )
+  }, [])
+
+  const deleteCanvas = useCallback((id: string) => {
+    setCanvases((prev) => prev.filter((item) => item.id !== id))
+  }, [])
+
+  const scheduleSend = useCallback(
+    (input: {
+      chatId: string | null
+      text: string
+      skillIds?: string[]
+      toolCalls?: McpToolCall[]
+      sendAt: number
+    }) => {
+      const item: ScheduledSend = {
+        id: `send_${Math.random().toString(36).slice(2, 9)}`,
+        chatId: input.chatId,
+        text: input.text,
+        skillIds: input.skillIds ?? [],
+        toolCalls: input.toolCalls ?? [],
+        sendAt: input.sendAt,
+      }
+      setScheduled((prev) => [...prev, item].sort((a, b) => a.sendAt - b.sendAt))
+      return item
+    },
+    [],
+  )
+
+  const cancelScheduled = useCallback((id: string) => {
+    setScheduled((prev) => prev.filter((item) => item.id !== id))
+  }, [])
+
   /* Derived */
   const providers = useMemo<Provider[]>(
     () =>
@@ -597,6 +707,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       signOut,
       chats,
       files,
+      canvases,
+      scheduled,
       jobs,
       media,
       automations,
@@ -622,6 +734,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       removeServer,
       refreshServer,
       callTool,
+      addCanvas,
+      patchCanvas,
+      deleteCanvas,
+      scheduleSend,
+      cancelScheduled,
       notify,
       toast,
       createChat,
@@ -657,6 +774,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       signOut,
       chats,
       files,
+      canvases,
+      scheduled,
       jobs,
       media,
       automations,
@@ -680,6 +799,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       removeServer,
       refreshServer,
       callTool,
+      addCanvas,
+      patchCanvas,
+      deleteCanvas,
+      scheduleSend,
+      cancelScheduled,
       notify,
       toast,
       createChat,

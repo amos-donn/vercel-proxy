@@ -1,9 +1,9 @@
 {
-  "name": "sosystem",
+  "name": "mezze",
   "private": true,
   "version": "0.2.0",
   "type": "module",
-  "description": "BYOK cloud agent workspace — dual-process System 1 + System 2",
+  "description": "BYOK cloud agent workspace \u2014 dual-process System 1 + System 2",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 3000",
     "build": "tsc --noEmit && vite build",

@@ -4,6 +4,7 @@ import {
   BookOpen,
   ChevronDown,
   FolderClosed,
+  Frame,
   KeyRound,
   ListChecks,
   MessagesSquare,
@@ -23,9 +24,10 @@ const toolLinks: Array<{
   view: View
   label: string
   icon: typeof FolderClosed
-  key: 'files' | 'keys' | 'jobs' | 'media' | 'automations' | 'skills'
+  key: 'files' | 'canvas' | 'keys' | 'jobs' | 'media' | 'automations' | 'skills'
 }> = [
   { view: { name: 'files' }, label: 'Files', icon: FolderClosed, key: 'files' },
+  { view: { name: 'canvas' }, label: 'Canvas', icon: Frame, key: 'canvas' },
   { view: { name: 'vault' }, label: 'Vault', icon: KeyRound, key: 'keys' },
   { view: { name: 'skills' }, label: 'Skills', icon: BookOpen, key: 'skills' },
   { view: { name: 'media' }, label: 'Media', icon: Sparkles, key: 'media' },
@@ -44,12 +46,13 @@ export function Sidebar({
   onNewChat: () => void
   onShortcuts: () => void
 }) {
-  const { chats, files, keys, skills, jobs, media, automations, usage, togglePin } = useStore()
+  const { chats, files, canvases, keys, skills, jobs, media, automations, usage, togglePin } = useStore()
   const [query, setQuery] = useState('')
   const [toolsOpen, setToolsOpen] = useState(true)
 
   const counts = {
     files: files.length,
+    canvas: canvases.length,
     keys: keys.length,
     jobs: jobs.filter((job) => job.state !== 'succeeded').length,
     media: media.length,
@@ -75,9 +78,9 @@ export function Sidebar({
   return (
     <aside className="sidebar" aria-label="Chats and tools">
       <div className="ws">
-        <div className="ws-mark">S</div>
+        <div className="ws-mark">M</div>
         <div className="ws-copy">
-          <span className="ws-name">sosystem</span>
+          <span className="ws-name">Mezze</span>
           <span className="ws-plan">personal workspace</span>
         </div>
         <button
