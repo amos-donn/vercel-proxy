@@ -1,8 +1,8 @@
-# sosystem — feature set (pass 2)
+# sosystem — feature set
 
-Legend: **●** shipped and interactive · **◐** shipped, simulated by design · **○** next pass (needs accounts/storage or infrastructure).
+Legend: **●** shipped and interactive · **◐** shipped, simulated by design · **○** next pass (needs infrastructure).
 
-This pass is complete except for accounts and storage. Everything below is clickable in the app; no key is required.
+Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP and skills are live. A provider key is only needed for the live runtime.
 
 ---
 
@@ -26,12 +26,12 @@ This pass is complete except for accounts and storage. Everything below is click
 
 | Feature | Status | Detail |
 | --- | --- | --- |
-| Icon rail | ● | Home, chats, files, vault, jobs, media, automations, integrations, settings. |
-| Sidebar | ● | Workspace switcher, new chat, search, pinned chats, grouped recent chats, tool counts, spend summary. |
-| Profile popup | ● | Identity, monthly spend meter, settings, shortcuts, density, reduced motion, sign-out placeholder. |
-| Command palette | ● | `⌘K` across pages, chats, files and jobs; keyboard navigation. |
-| Shortcut sheet | ● | `⌘K`, `⌘N`, `Esc`, send/newline. |
-| Topbar | ● | Breadcrumb, approval alert, palette trigger, honest runtime badge. |
+| Icon rail | ● | Home, chats, files, vault, jobs, media, automations, integrations, skills, settings. |
+| Sidebar | ● | New chat, search, pinned chats, grouped recent chats, tool counts, workspace spend and fast-path share. |
+| Profile popup | ● | Real identity, workspace spend and fast-path meter, settings, keys, shortcuts, density, reduced motion, sign out. |
+| Command palette | ● | `⌘K` across pages, chats, skills, files and jobs; file entries open the file. |
+| Shortcut sheet | ● | `⌘K`, `⌘N`, `⌘\`, `⌘/`, `/`, `Esc`, send/newline. |
+| Topbar | ● | Breadcrumb, save indicator, approval alert, palette trigger, honest runtime badge. |
 | Home | ● | Greeting, hero composer, follow-up suggestions, pinned chats, running job, latest artifact, workspace counts, loop explainer, tool grid. |
 | Responsive layout | ● | Rail/sidebar collapse, chat inspector hides, single-column tool pages on narrow screens. |
 | Density + motion | ● | Compact and reduced-motion preferences apply live. |
@@ -43,13 +43,15 @@ This pass is complete except for accounts and storage. Everything below is click
 | Chat index | ● | Filter All/Pinned/Needs you, text search, status, item counts, tags. |
 | Pinned chats | ● | Pin/unpin from sidebar, chat header or table; pinned groups on Home. |
 | Streaming replies | ● | Word-paced streaming with a caret; trace, tools and plans appear in order. |
-| Approval gates | ● | Inline card with risk, scope, approve once / always allow / deny. Approving writes a real in-memory file. |
+| Approval gates | ● | Inline card with risk, scope, approve once / deny. Approving writes a real workspace file. |
+| Skill chips | ● | Skills attached with `/` show on the user turn and in the chat header. |
+| MCP calls | ● | Attached tool calls run before the turn, render their real output, and reach System 2 as evidence. |
 | Tool cards | ● | Collapsible input/output, running/ok state, duration, optional diff renderer. |
 | Artifact cards | ● | Jump to Files or Media; content retained on the message. |
 | Chat inspector | ● | Trace, plan and artifacts tabs; S1/S2 configuration summary. |
 | Export | ● | Download the thread as Markdown. |
 | Delete/pin | ● | Session-local actions with confirmation where destructive. |
-| Seeded demos | ● | Release notes, dead-letter diagnosis, transcription, competitor scan, digest. |
+| Starter workspace | ● | New accounts get memory and welcome files plus four builtin skills; chats start empty. |
 
 ## 4. Files
 
@@ -58,7 +60,7 @@ This pass is complete except for accounts and storage. Everything below is click
 | Workspace tree | ● | Grouped roots (`memory`, `reports`, `drafts`, `plans`, `data`, `runs`, `transcripts`, `uploads`, `docs`, `jobs`). |
 | Path validation | ● | Root allowlist, no traversal, no empty filename; enforced before write. |
 | Markdown preview | ● | Headings, lists, paragraphs; raw toggle for every file. |
-| Create/write | ● | Real writes into session state, with origin (agent/user) and byte count. |
+| Create/write | ● | Real writes into the workspace snapshot, with origin (agent/user) and byte count. |
 | Upload | ● | Text read into `uploads/`, clipped at 400 KB with a notice. |
 | Download/copy | ● | Blob download and clipboard path copy. |
 | Delete | ● | Inline confirmation, selection repair. |
@@ -70,13 +72,13 @@ This pass is complete except for accounts and storage. Everything below is click
 
 | Feature | Status | Detail |
 | --- | --- | --- |
-| Secret list | ● | Key, mask, scopes, last update/use. |
-| Masked secrets | ● | Reveal/hide with an audit entry; copy logs too. |
-| Restricted secrets | ● | Never revealable or copyable; replace/delete only. |
-| Add secret | ● | Key normalisation, value, agent scopes, masked vs restricted. |
-| Delete | ● | Inline confirmation, crypto-shred language, audit entry. |
-| Audit log | ● | Created, injected, revealed, replaced, denied — actor, time, outcome. |
-| Custody card | ● | AES-256-GCM, per-workspace KEK, crypto-shred on revoke. |
+| Key list | ● | Provider key name, provider, masked tail, source, last update and last use. |
+| Per-account storage | ● | Each account stores its own keys; Worker-level secrets are listed separately as fallbacks. |
+| Add / replace | ● | Provider preset or a custom upper-snake-case name; overwrites the ciphertext in place. |
+| Delete | ● | Inline confirmation; removes the row and writes an audit event. |
+| Write-only values | ● | No reveal or copy endpoint: the browser only ever receives a mask. |
+| Audit log | ● | Created, replaced, deleted — written server-side with a timestamp. |
+| Custody | ● | AES-GCM with a key derived from `SOSYSTEM_SECRET` or a generated deployment key in D1. |
 
 ## 6. Jobs and quota
 
@@ -113,20 +115,34 @@ This pass is complete except for accounts and storage. Everything below is click
 | Run now | ● | Opens a fresh chat with the automation prompt and updates counters. |
 | Create | ● | Name, prompt, 15m/1h/1d/1w cadence. |
 | Delete | ● | Inline confirmation. |
-| Honest limit | ● | No cron while storage is out of scope; the UI says so. |
+| Honest limit | ● | Cadence and prompts persist, but no scheduler runs them yet; Run now opens a real chat. |
 
-## 9. Integrations
+## 9. Skills
 
 | Feature | Status | Detail |
 | --- | --- | --- |
-| MCP catalog | ● | GitHub, Linear, Slack, Postgres, Notion, Browserbase with categories. |
-| Statuses | ● | connected, needs auth, degraded, available. |
-| Connect flow | ● | Connecting state → connected; disconnect; authorize. |
-| Detail | ● | Scopes, transport, tool namespace, auth mode, agent exposure. |
-| Per-agent exposure | ● | Toggle server availability; tool policy still applies. |
-| Custom server | ● | Name, endpoint, streamable-http/SSE/stdio; added to the catalog. |
+| Skill library | ● | Name, slug, description, instruction, enabled state, builtin/custom. |
+| Slash menu | ● | Type `/` in any composer; filter by slug or name, arrow keys, Enter or Tab to attach. |
+| Chips | ● | Attached skills become removable chips in the composer, on the user turn and in the chat header. |
+| Prompt wiring | ● | Enabled skills are added to the System 2 system prompt by name and instruction. |
+| Create / edit / delete | ● | Shared modal with validation and a unique derived slug. |
+| Persistence | ● | Skills live in the workspace snapshot and save with everything else. |
 
-## 10. Agents
+## 10. Integrations
+
+| Feature | Status | Detail |
+| --- | --- | --- |
+| MCP servers | ● | Real list from D1: name, endpoint, transport, status, tool count, agent exposure. |
+| Add server | ● | HTTPS endpoint, streamable HTTP or SSE, optional bearer token. |
+| Discovery | ● | Real `initialize` + `tools/list` handshake with pagination, stored tool schemas. |
+| Tool runner | ● | Schema-driven argument form, live `tools/call`, output shown in the modal. |
+| Composer attach | ● | Pick a server and tool, fill its schema, attach the call to a chat turn. |
+| Tokens | ● | Bearer tokens encrypted with the same AES-GCM key store as provider keys. |
+| Enable / disable | ● | Disabled servers stay configured but drop out of the composer picker. |
+| Refresh / remove | ● | Re-run discovery, or delete the server and its tools. |
+| Transport scope | ● | HTTPS only; private and loopback endpoints require `ALLOW_PRIVATE_MCP=1` for local development. |
+
+## 11. Agents
 
 | Feature | Status | Detail |
 | --- | --- | --- |
@@ -139,38 +155,37 @@ This pass is complete except for accounts and storage. Everything below is click
 | Stats | ● | Runs, success, cost-per-run, recent work. |
 | Shared S1 card | ● | Explains the shared typed layer and escalation gate. |
 
-## 11. Settings and operations
+## 12. Settings and operations
 
 | Feature | Status | Detail |
 | --- | --- | --- |
 | Runtime switch | ● | Simulated/live with health probe and honest fallback warning. |
 | S1 tuning | ● | Jev model, accept/escalate/risk thresholds, reset. |
-| S2 tuning | ● | Lane, effort, baseline costs, monthly budget. |
+| S2 tuning | ● | Lane, effort, real workspace spend, savings, decision count and prompt tokens. |
 | Approval posture | ● | Auto / gate risky / ask first with explanations. |
-| Providers | ● | Six BYOK providers, masks, model counts, missing/connected. |
-| Key handling | ● | Explains Worker secrets; no credential is stored by the UI. |
-| Interface | ● | Compact, reduced motion, disabled light-theme preview. |
-| Workspace status | ● | Auth, persistence, D1, deploy target. |
-| Deploy | ● | Worker URL, secret commands, copyable deploy command. |
+| Providers | ● | Five provider lanes with live key masks, model counts and source (yours or Worker secret). |
+| Key handling | ● | Manage keys in Vault; values are encrypted before storage and never returned. |
+| Interface | ● | Compact density and reduced motion. |
+| Account | ● | Name, email, member since, session lifetime, sign out. |
+| Workspace status | ● | D1 snapshot, last save state, chat and file counts. |
+| Deploy | ● | Worker URL, D1 binding and the push-to-deploy command. |
 
 ---
 
-## 12. Security and trust posture
+## 13. Security and trust posture
 
-- Keys are never sent to the browser by the Worker in this pass; only booleans leave `/api/health`.
-- Provider keys in the UI are session-only masks, never persisted.
-- The Vault separates “masked” (logged reveal) from “restricted” (no reveal, no copy).
+- Every API route except health and auth requires a session; ownership is taken from the session, never from the request body.
+- Session IDs are hashed at rest, cookies are HttpOnly and SameSite=Lax, passwords use PBKDF2-SHA256 with a per-user salt.
+- Writes require a matching `Origin`; cross-origin mutations return 403.
+- Provider keys and MCP tokens are sealed with AES-GCM before they reach D1 and are decrypted only inside the Worker for one upstream call.
+- Key values are write-only: there is no reveal or copy endpoint, and the inventory returns masks only.
 - Writes stop at approval regardless of System 1 confidence; the typed risk answer can only add a gate.
-- Every reveal, copy, injection and denial writes an audit event.
-- The app states that `/api/*` is unauthenticated until accounts land; do not deploy it as a public multi-user service yet.
+- MCP endpoints must use HTTPS and private hosts are rejected unless explicitly enabled for local development.
 
-## 13. Explicit gaps for the next pass
+## 14. Explicit gaps for the next pass
 
-1. Auth and workspace scoping.
-2. D1 schema for chats/messages/traces/files/secrets/jobs/automations; D1-backed queue/cron.
-3. Encrypted BYOK storage with envelope encryption and rotation.
-4. Durable Object per thread + SSE resume via `Last-Event-ID`.
-5. Real tool execution (sandbox, shell, GitHub App, MCP client).
-6. Real Gemini transcription, signed object storage and cleanup/expiry.
-7. Real scheduling (Workflow/cron) and notifications on approvals.
-8. Billing/ledger reconciliation for provider usage.
+1. Durable Object per thread + SSE resume via `Last-Event-ID`.
+2. D1-backed queue/cron for jobs and automations.
+3. Real sandbox: shell, files, GitHub App, Gemini transcription with signed object storage.
+4. Notifications on approvals and long-running jobs.
+5. Billing/ledger reconciliation for provider usage.

@@ -17,9 +17,9 @@ import { Chip, Empty, Field, Meter, Modal } from '../components/ui'
 
 const allowedRoots = ['memory', 'reports', 'drafts', 'plans', 'data', 'runs', 'transcripts', 'uploads', 'jobs', 'docs']
 
-export function FilesPage() {
+export function FilesPage({ initialPath }: { initialPath?: string } = {}) {
   const { files, writeFile, deleteFile, notify } = useStore()
-  const [selectedPath, setSelectedPath] = useState('reports/billing-weekly.md')
+  const [selectedPath, setSelectedPath] = useState(initialPath ?? files[0]?.path ?? '')
   const [query, setQuery] = useState('')
   const [view, setView] = useState<'preview' | 'raw'>('preview')
   const [newOpen, setNewOpen] = useState(false)
@@ -129,7 +129,7 @@ export function FilesPage() {
       <div className="usage-strip">
         <span className="mono">{files.length} files · {fileSize(totalBytes)}</span>
         <Meter value={(totalBytes / 5_000_000) * 100} tone="lime" label="Workspace usage" />
-        <span className="tiny faint">in-memory · resets when the tab closes</span>
+        <span className="tiny faint">saved to D1 · available in every signed-in tab</span>
       </div>
 
       <div className="files-layout">
@@ -259,7 +259,7 @@ export function FilesPage() {
 
               <footer className="file-meta">
                 <span className="mono">{file.bytes.toLocaleString()} bytes</span>
-                <span>sha in memory only</span>
+                <span>stored in your workspace snapshot</span>
                 <span className="grow" />
                 <span className="tiny faint">Path traversal, dotfiles and symlinks are rejected before write.</span>
               </footer>
@@ -276,7 +276,7 @@ export function FilesPage() {
         open={newOpen}
         onClose={() => setNewOpen(false)}
         title="New file"
-        subtitle="Creates a real file in this session. Nothing is persisted after the tab closes."
+        subtitle="Creates a file in your workspace. It saves to D1 with the rest of the snapshot."
         footer={
           <>
             <button type="button" className="btn btn-quiet" onClick={() => setNewOpen(false)}>

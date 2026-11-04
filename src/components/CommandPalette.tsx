@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  BookOpen,
   Bot,
   FileText,
   FolderClosed,
@@ -29,6 +30,7 @@ const pages: Array<{ name: View['name']; label: string; icon: typeof Home }> = [
   { name: 'automations', label: 'Automations', icon: Timer },
   { name: 'integrations', label: 'Integrations', icon: Bot },
   { name: 'agents', label: 'Agents', icon: Wrench },
+  { name: 'skills', label: 'Skills', icon: BookOpen },
   { name: 'settings', label: 'Settings', icon: Settings },
 ]
 
@@ -43,7 +45,7 @@ export function CommandPalette({
   onNavigate: (view: View) => void
   counts: { chats: number; files: number; jobs: number }
 }) {
-  const { chats, files, jobs } = useStore()
+  const { chats, files, jobs, skills } = useStore()
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -74,8 +76,15 @@ export function CommandPalette({
       id: `file_${file.path}`,
       label: file.path,
       hint: 'Open file',
-      view: { name: 'files' },
+      view: { name: 'files', path: file.path },
       icon: FileText,
+    }))
+    const skillItems: Item[] = skills.filter((skill) => skill.enabled).slice(0, 6).map((skill) => ({
+      id: `skill_${skill.id}`,
+      label: `/${skill.slug}`,
+      hint: skill.name,
+      view: { name: 'skills' },
+      icon: Sparkles,
     }))
     const jobItems: Item[] = jobs.slice(0, 4).map((job) => ({
       id: `job_${job.id}`,
@@ -84,11 +93,11 @@ export function CommandPalette({
       view: { name: 'jobs' },
       icon: ListChecks,
     }))
-    const all = [...pageItems, ...chatItems, ...fileItems, ...jobItems]
+    const all = [...pageItems, ...chatItems, ...skillItems, ...fileItems, ...jobItems]
     const q = query.trim().toLowerCase()
-    if (!q) return all.slice(0, 14)
+    if (!q) return all.slice(0, 16)
     return all.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(q))
-  }, [chats, files, jobs, query])
+  }, [chats, files, jobs, skills, query])
 
   useEffect(() => {
     if (index > items.length - 1) setIndex(Math.max(0, items.length - 1))
@@ -110,7 +119,7 @@ export function CommandPalette({
           <input
             ref={inputRef}
             value={query}
-            placeholder="Search chats, files, jobs, or jump…"
+            placeholder="Search chats, files, skills, or jump…"
             onChange={(event) => {
               setQuery(event.target.value)
               setIndex(0)
@@ -153,7 +162,7 @@ export function CommandPalette({
         <footer className="palette-foot">
           <span><kbd className="kbd">↑</kbd><kbd className="kbd">↓</kbd> navigate</span>
           <span><kbd className="kbd">↵</kbd> open</span>
-          <span className="palette-foot-right">files search lands with the storage pass</span>
+          <span className="palette-foot-right">saved to D1 · ⌘K anywhere</span>
         </footer>
       </div>
     </div>

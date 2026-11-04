@@ -1,4 +1,5 @@
 import {
+  BookOpen,
   Bot,
   FolderClosed,
   Home,
@@ -21,6 +22,7 @@ const items: Array<{ view: View; label: string; icon: typeof Home }> = [
   { view: { name: 'media' }, label: 'Media', icon: Sparkles },
   { view: { name: 'automations' }, label: 'Automations', icon: Timer },
   { view: { name: 'integrations' }, label: 'Integrations', icon: Bot },
+  { view: { name: 'skills' }, label: 'Skills', icon: BookOpen },
 ]
 
 export function Rail({ view, onNavigate }: { view: View; onNavigate: (view: View) => void }) {

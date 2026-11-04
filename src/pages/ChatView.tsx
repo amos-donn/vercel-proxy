@@ -23,9 +23,9 @@ import {
   Zap,
 } from 'lucide-react'
 import { useStore } from '../store'
-import type { Chat, ChatMessage, FileDiff, PlanStep, View } from '../types'
+import type { Chat, ChatMessage, FileDiff, McpToolCall, PlanStep, Skill, View } from '../types'
 import { cn, money, sleep, splitWords, uid } from '../lib/format'
-import { executeTurn } from '../engine/runtime'
+import { executeTurn, type TurnEvidence } from '../engine/runtime'
 import { TraceCard } from '../components/TraceCard'
 import { Composer, type ComposerMode } from '../components/Composer'
 import { Chip, Segmented, StatusPill, Tabs } from '../components/ui'
@@ -59,7 +59,10 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
     if (!queued) return
     started.current = true
     const force = Boolean(chat.tags?.includes('force-s2') || chat.tags?.includes('think'))
-    void run(queued, force)
+    const picked = queued.skillIds
+      .map((id) => store.skills.find((skill) => skill.id === id))
+      .filter((skill): skill is Skill => Boolean(skill))
+    void run(queued.text, force, picked, queued.toolCalls)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat?.id])
 
@@ -113,10 +116,59 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
     store.patchMessage(chat.id, messageId, { streaming: false })
   }
 
-  const run = async (text: string, force: boolean) => {
+  const run = async (
+    text: string,
+    force: boolean,
+    skills: Skill[] = [],
+    toolCalls: McpToolCall[] = [],
+  ) => {
     setBusy(true)
     store.patchChat(chat.id, { status: 'running', updated: 'just now', preview: text.slice(0, 120) })
-    append({ id: uid('m'), kind: 'user', text, at: stamp() })
+    append({
+      id: uid('m'),
+      kind: 'user',
+      text,
+      at: stamp(),
+      ...(skills.length
+        ? { skills: skills.map((skill) => ({ id: skill.id, slug: skill.slug, name: skill.name })) }
+        : {}),
+    })
+
+    const evidence: TurnEvidence[] = []
+    for (const call of toolCalls) {
+      const toolId = uid('m')
+      append({
+        id: toolId,
+        kind: 'tool',
+        name: `mcp.${call.tool}`,
+        title: `${call.serverName} · ${call.tool}`,
+        input: JSON.stringify(call.args, null, 2),
+        status: 'running',
+      })
+      const startedAt = performance.now()
+      try {
+        const result = await store.callTool(call.serverId, call.tool, call.args)
+        const output = result.content || '(empty result)'
+        store.patchMessage(chat.id, toolId, {
+          status: 'ok',
+          output: output.slice(0, 6000),
+          ms: Math.round(performance.now() - startedAt),
+        })
+        evidence.push({ title: `${call.serverName} · ${call.tool}`, output: output.slice(0, 6000) })
+      } catch (error) {
+        store.patchMessage(chat.id, toolId, {
+          status: 'error',
+          output: error instanceof Error ? error.message : 'MCP call failed',
+          ms: Math.round(performance.now() - startedAt),
+        })
+        append({
+          id: uid('m'),
+          kind: 'notice',
+          text: `MCP call failed · ${error instanceof Error ? error.message : 'unknown error'}`,
+        })
+      }
+    }
+    if (!alive.current) return
 
     try {
       const result = await executeTurn({
@@ -124,10 +176,12 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
         files: store.files.map((file) => file.path),
         fileCount: store.files.length,
         runningJobs: store.jobs.filter((job) => job.state !== 'succeeded').length,
-        forceSystem2: force || mode !== 'auto',
+        forceSystem2: force || mode !== 'auto' || evidence.length > 0,
         thresholds: store.settings.thresholds,
         s2Model: store.settings.s2Model,
         runtime: store.settings.runtime,
+        skills: skills.map((skill) => ({ name: skill.name, prompt: skill.prompt })),
+        evidence,
       })
       if (!alive.current) return
 
@@ -316,6 +370,9 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
             <span className="mono">{agent?.name ?? 'Forge'}</span>
             <span className="mono">{store.settings.s2Model}</span>
             <span className="mono">jev · {store.settings.jevModel}</span>
+            {(chat.skillIds ?? []).length ? (
+              <span className="mono">{chat.skillIds?.length} skills</span>
+            ) : null}
             <span>{stats.traces} decisions · {stats.escalations} escalations</span>
           </div>
         </div>
@@ -379,11 +436,13 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
                     ? 'The agent is working…'
                     : 'Ask a follow-up, or force System 2 with Think harder'
               }
-              onSubmit={(text) => void run(text, think)}
+              onSubmit={(text, _attachments, skills, toolCalls) =>
+                void run(text, think, skills, toolCalls)
+              }
             />
             <p className="dock-note">
               <span className="dot" /> {store.settings.runtime === 'simulated' ? 'simulated runtime' : 'live worker'} ·
-              nothing leaves this tab except /api calls
+              workspace saved to D1 · keys stay in the Worker
             </p>
           </div>
         </div>
@@ -520,7 +579,18 @@ function MessageView({
       return (
         <div className="msg msg-user">
           <span className="msg-avatar">you</span>
-          <div className="msg-bubble">{message.text}</div>
+          <div className="msg-bubble">
+            {message.text}
+            {message.skills?.length ? (
+              <div className="msg-skills">
+                {message.skills.map((skill) => (
+                  <span key={skill.id} className="token-chip token-skill">
+                    <Sparkles size={10} /> /{skill.slug}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
       )
     case 'trace':
@@ -580,9 +650,6 @@ function MessageView({
             <div className="approval-actions">
               <button type="button" className="btn btn-primary btn-sm" onClick={() => onApprove(message)}>
                 <Check size={12} /> Approve once
-              </button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => onApprove(message)}>
-                Always allow in this repo
               </button>
               <button type="button" className="btn btn-quiet btn-sm" onClick={() => onDeny(message)}>
                 <X size={12} /> Deny

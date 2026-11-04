@@ -11,9 +11,12 @@ export type ViewName =
   | 'automations'
   | 'integrations'
   | 'agents'
+  | 'skills'
   | 'settings'
 
-export type View = { name: ViewName } | { name: 'chat'; id: string }
+export type View =
+  | { name: ViewName; path?: string }
+  | { name: 'chat'; id: string }
 
 export type RuntimeMode = 'simulated' | 'live'
 export type ApprovalPosture = 'auto' | 'risky' | 'ask'
@@ -106,7 +109,7 @@ export interface DecisionTrace {
  * ------------------------------------------------------------------ */
 
 export type ChatMessage =
-  | { id: string; kind: 'user'; text: string; at: string }
+  | { id: string; kind: 'user'; text: string; at: string; skills?: SkillRef[] }
   | {
       id: string
       kind: 'assistant'
@@ -164,6 +167,7 @@ export interface Chat {
   messages: ChatMessage[]
   plan?: PlanStep[]
   tags?: string[]
+  skillIds?: string[]
 }
 
 /* ------------------------------------------------------------------ *
@@ -178,24 +182,6 @@ export interface WorkspaceFile {
   origin: 'agent' | 'user'
 }
 
-export interface Secret {
-  id: string
-  key: string
-  value: string
-  scope: string[]
-  visibility: 'masked' | 'restricted'
-  updated: string
-  lastUsed?: string
-}
-
-export interface AuditEvent {
-  id: string
-  action: 'created' | 'revealed' | 'replaced' | 'deleted' | 'injected' | 'denied'
-  key: string
-  actor: string
-  at: string
-  outcome: 'ok' | 'denied'
-}
 
 /* ------------------------------------------------------------------ *
    Jobs & quota
@@ -292,19 +278,6 @@ export interface Automation {
   lastRun?: string
 }
 
-export interface Integration {
-  id: string
-  name: string
-  category: string
-  blurb: string
-  transport: 'streamable-http' | 'sse' | 'stdio'
-  status: 'connected' | 'needs_auth' | 'degraded' | 'available'
-  scopes: string[]
-  tools: number
-  agents: number
-  verified?: boolean
-}
-
 export interface Agent {
   id: string
   name: string
@@ -329,6 +302,114 @@ export interface Provider {
   models: number
   note: string
   tone: Tone
+  source?: 'user' | 'worker'
+}
+
+/* ------------------------------------------------------------------ *
+   Skills, keys, MCP
+ * ------------------------------------------------------------------ */
+
+export interface SkillRef {
+  id: string
+  slug: string
+  name: string
+}
+
+export interface Skill {
+  id: string
+  name: string
+  slug: string
+  description: string
+  prompt: string
+  enabled: boolean
+  builtin?: boolean
+}
+
+export interface ApiKeyMeta {
+  id: string
+  name: string
+  provider: string
+  masked: string
+  source: 'user' | 'worker'
+  createdAt: number
+  updatedAt: number
+  lastUsedAt?: number
+}
+
+export type McpTransport = 'streamable-http' | 'sse'
+
+export interface McpTool {
+  name: string
+  description?: string
+  inputSchema?: Record<string, unknown>
+}
+
+export interface McpServer {
+  id: string
+  name: string
+  url: string
+  transport: McpTransport
+  enabled: boolean
+  status: 'available' | 'connected' | 'error'
+  authSet: boolean
+  tools: McpTool[]
+  toolsCount: number
+  error?: string
+  updatedAt: number
+}
+
+export interface WorkspaceSnapshot {
+  chats: Chat[]
+  files: WorkspaceFile[]
+  jobs: Job[]
+  media: MediaItem[]
+  automations: Automation[]
+  agents: Agent[]
+  skills: Skill[]
+  settings: Settings
+}
+
+/* ------------------------------------------------------------------ *
+   Session, keys, MCP transport
+ * ------------------------------------------------------------------ */
+
+export interface SessionUser {
+  id: string
+  email: string
+  name: string
+  createdAt: number
+}
+
+export interface KeyEvent {
+  id: string
+  action: string
+  key: string
+  outcome: string
+  at: number
+}
+
+export interface ProviderStatus {
+  configured: boolean
+  masked?: string
+  source?: 'user' | 'worker'
+}
+
+export interface KeyInventory {
+  keys: ApiKeyMeta[]
+  audit: KeyEvent[]
+  providers: Record<string, ProviderStatus>
+}
+
+export interface McpCallResult {
+  content: string
+  raw?: unknown
+}
+
+export interface McpToolCall {
+  serverId: string
+  serverName: string
+  tool: string
+  args: Record<string, unknown>
 }
 
 export interface Lane {

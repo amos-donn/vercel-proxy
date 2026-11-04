@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import {
   ArrowRight,
   ArrowUpRight,
+  BookOpen,
   Brain,
   FileText,
   FolderClosed,
@@ -14,7 +15,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { useStore } from '../store'
-import type { View } from '../types'
+import type { McpToolCall, Skill, View } from '../types'
 import { Composer, type ComposerMode } from '../components/Composer'
 import { Chip, StatusPill } from '../components/ui'
 import { cn, money } from '../lib/format'
@@ -26,30 +27,41 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
     files,
     media,
     automations,
-    secrets,
-    integrations,
+    keys,
+    mcpServers,
+    skills,
+    agents,
+    usage,
+    user,
     createChat,
     patchChat,
     settings,
     notify,
+    saveNow,
   } = useStore()
   const [mode, setMode] = useState<ComposerMode>('auto')
   const [think, setThink] = useState(false)
 
   const hour = new Date().getHours()
   const greeting = hour < 5 ? 'Still up' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
+  const firstName = user?.name.split(/\s+/)[0] ?? 'there'
 
   const pinned = chats.filter((chat) => chat.pinned).slice(0, 2)
-  const running = jobs.filter((job) => job.state === 'running' || job.state === 'paused_rate' || job.state === 'awaiting_approval')
+  const running = jobs.filter(
+    (job) => job.state === 'running' || job.state === 'paused_rate' || job.state === 'awaiting_approval',
+  )
   const latestFile = useMemo(
     () => [...files].sort((a, b) => (a.updated === 'just now' ? -1 : 1))[0],
     [files],
   )
+  const connectedServers = mcpServers.filter((server) => server.enabled)
+  const enabledSkills = skills.filter((skill) => skill.enabled)
 
-  const start = (text: string) => {
-    const id = createChat(text)
-    if (mode !== 'auto') patchChat(id, { tags: [mode, 'force-s2'] })
-    if (think) patchChat(id, { tags: [mode, 'force-s2', 'think'] })
+  const start = (text: string, _attachments: string[], picked: Skill[], toolCalls: McpToolCall[]) => {
+    const ids = picked.map((skill) => skill.id)
+    const id = createChat(text, 'forge', ids, toolCalls)
+    const tags = [...(mode !== 'auto' ? [mode, 'force-s2'] : []), ...(think ? ['think', 'force-s2'] : [])]
+    if (tags.length) patchChat(id, { tags })
     onNavigate({ name: 'chat', id })
   }
 
@@ -59,9 +71,12 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
         <header className="home-hero">
           <div className="hero-glow" aria-hidden="true" />
           <div className="eyebrow">
-            <span className="dot" /> system 1 decides · system 2 writes
+            <span className={cn('dot', settings.runtime === 'live' && 'dot-live')} />
+            {settings.runtime === 'live' ? 'live worker · your keys' : 'simulated · add keys to go live'}
           </div>
-          <h1>{greeting}, Amos.</h1>
+          <h1>
+            {greeting}, {firstName}.
+          </h1>
           <p className="home-sub">
             Ask for the outcome. Reflex handles the next move, the heavy model only wakes for plans and
             prose, and anything irreversible stops at a gate.
@@ -86,7 +101,7 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
               ['Transcribe the founder interview', 'auto'],
               ['Turn the competitor CSV into a memo', 'write'],
             ].map(([label]) => (
-              <button key={label} type="button" className="suggestion" onClick={() => start(label)}>
+              <button key={label} type="button" className="suggestion" onClick={() => start(label, [], [], [])}>
                 <Sparkles size={12} /> {label}
               </button>
             ))}
@@ -137,7 +152,11 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
               ))}
 
               {latestFile && latestFile.text ? (
-                <button type="button" className="continue-card" onClick={() => onNavigate({ name: 'files' })}>
+                <button
+                  type="button"
+                  className="continue-card"
+                  onClick={() => onNavigate({ name: 'files', path: latestFile.path })}
+                >
                   <span className="continue-top">
                     <FileText size={11} /> latest artifact
                   </span>
@@ -147,6 +166,10 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
                   </span>
                   <span className="continue-foot">{(latestFile.bytes / 1024).toFixed(1)} KB · {latestFile.origin}</span>
                 </button>
+              ) : null}
+
+              {!pinned.length && !running.length && !latestFile ? (
+                <p className="tiny faint">Nothing here yet. Start a chat and it will show up.</p>
               ) : null}
             </div>
           </section>
@@ -189,8 +212,10 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
             </div>
 
             <div className="loop-foot">
-              <span className="mono">{money(4.12)}</span> spent this month
-              <span className="loop-foot-right">91% fast-path</span>
+              <span className="mono">{money(usage.spend)}</span> this workspace
+              <span className="loop-foot-right">
+                {usage.decisions ? `${usage.fastPath}% fast-path` : 'no turns yet'}
+              </span>
             </div>
           </section>
 
@@ -209,18 +234,18 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
               </button>
               <button type="button" className="stat-link" onClick={() => onNavigate({ name: 'vault' })}>
                 <KeyRound size={14} />
-                <span className="stat-value">{secrets.length}</span>
-                <span className="stat-label">secrets</span>
+                <span className="stat-value">{keys.length}</span>
+                <span className="stat-label">keys</span>
               </button>
               <button type="button" className="stat-link" onClick={() => onNavigate({ name: 'jobs' })}>
                 <ListChecks size={14} />
                 <span className="stat-value">{jobs.length}</span>
                 <span className="stat-label">jobs</span>
               </button>
-              <button type="button" className="stat-link" onClick={() => onNavigate({ name: 'media' })}>
-                <Sparkles size={14} />
-                <span className="stat-value">{media.length}</span>
-                <span className="stat-label">media</span>
+              <button type="button" className="stat-link" onClick={() => onNavigate({ name: 'skills' })}>
+                <BookOpen size={14} />
+                <span className="stat-value">{enabledSkills.length}</span>
+                <span className="stat-label">skills</span>
               </button>
             </div>
             <div className="divider" />
@@ -230,11 +255,12 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
                 <ArrowRight size={12} />
               </button>
               <button type="button" className="mini-row" onClick={() => onNavigate({ name: 'integrations' })}>
-                <Sparkles size={13} /> {integrations.filter((item) => item.status === 'connected').length} integrations connected
+                <Sparkles size={13} /> {connectedServers.length} MCP servers ·{' '}
+                {connectedServers.reduce((sum, server) => sum + server.toolsCount, 0)} tools
                 <ArrowRight size={12} />
               </button>
               <button type="button" className="mini-row" onClick={() => onNavigate({ name: 'agents' })}>
-                <Brain size={13} /> 4 agents · dual-process defaults
+                <Brain size={13} /> {agents.length} agents · dual-process defaults
                 <ArrowRight size={12} />
               </button>
             </div>
@@ -251,10 +277,10 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
               {[
                 { label: 'Files', icon: FolderClosed, view: 'files' as const },
                 { label: 'Vault', icon: KeyRound, view: 'vault' as const },
-                { label: 'Jobs', icon: ListChecks, view: 'jobs' as const },
-                { label: 'Media', icon: Sparkles, view: 'media' as const },
+                { label: 'Skills', icon: BookOpen, view: 'skills' as const },
+                { label: 'MCP', icon: Sparkles, view: 'integrations' as const },
                 { label: 'Automations', icon: Timer, view: 'automations' as const },
-                { label: 'Integrations', icon: Sparkles, view: 'integrations' as const },
+                { label: 'Media', icon: Sparkles, view: 'media' as const },
               ].map((item) => {
                 const Icon = item.icon
                 return (
@@ -274,9 +300,10 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
         </div>
 
         <footer className="home-foot">
-          <Play size={11} /> Prototype · no accounts, no storage. Uploads live in memory; closing the tab resets the workspace.
-          <button type="button" className="link-btn" onClick={() => notify('Nothing to save: storage is intentionally out of scope')}>
-            Why?
+          <Play size={11} /> Saved to D1 for {user?.email ?? 'this account'} ·{' '}
+          {media.length} media items · keys are encrypted at rest.
+          <button type="button" className="link-btn" onClick={() => void saveNow().then(() => notify('Workspace saved'))}>
+            Save now
           </button>
         </footer>
       </div>

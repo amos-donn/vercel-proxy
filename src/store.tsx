@@ -2,74 +2,118 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
-import {
-  agents as seedAgents,
-  audit as seedAudit,
-  automations as seedAutomations,
-  chats as seedChats,
-  files as seedFiles,
-  integrations as seedIntegrations,
-  jobs as seedJobs,
-  lanes as seedLanes,
-  media as seedMedia,
-  providers as seedProviders,
-  quotas as seedQuotas,
-  secrets as seedSecrets,
-  settings as seedSettings,
-} from './data/mock'
+import { api, ApiError } from './lib/api'
+import { defaultSkills, defaultWorkspace, lanes, quotas } from './data/defaults'
+import { providers as providerCatalog } from './data/providers'
 import type {
   Agent,
+  ApiKeyMeta,
   ApprovalPosture,
-  AuditEvent,
   Automation,
   Chat,
   ChatMessage,
-  Integration,
   Job,
+  KeyEvent,
+  Lane,
+  McpCallResult,
+  McpServer,
+  McpToolCall,
+  McpTransport,
   MediaItem,
   Provider,
-  Secret,
+  ProviderStatus,
+  Quota,
+  SessionUser,
   Settings,
+  Skill,
   WorkspaceFile,
+  WorkspaceSnapshot,
 } from './types'
 
-export interface AppState {
+export type AuthStatus = 'loading' | 'anon' | 'authed'
+export type SaveState = 'idle' | 'saving' | 'saved' | 'error'
+
+export interface QueueItem {
+  text: string
+  skillIds: string[]
+  toolCalls: McpToolCall[]
+}
+
+export interface UsageSummary {
+  spend: number
+  saved: number
+  decisions: number
+  escalations: number
+  fastPath: number
+  promptTokens: number
+}
+
+interface StoreValue {
+  /* session */
+  status: AuthStatus
+  user: SessionUser | null
+  signIn: (email: string, password: string) => Promise<void>
+  signUp: (name: string, email: string, password: string) => Promise<void>
+  signOut: () => Promise<void>
+
+  /* workspace */
   chats: Chat[]
   files: WorkspaceFile[]
-  secrets: Secret[]
-  audit: AuditEvent[]
   jobs: Job[]
   media: MediaItem[]
   automations: Automation[]
-  integrations: Integration[]
   agents: Agent[]
-  providers: Provider[]
-  lanes: typeof seedLanes
-  quotas: typeof seedQuotas
+  skills: Skill[]
   settings: Settings
-  toast: string | null
-}
+  providers: Provider[]
+  keys: ApiKeyMeta[]
+  keyAudit: KeyEvent[]
+  providerStatus: Record<string, ProviderStatus>
+  mcpServers: McpServer[]
+  lanes: Lane[]
+  quotas: Quota[]
+  usage: UsageSummary
+  saveState: SaveState
+  saveNow: () => Promise<void>
+  reloadWorkspace: () => Promise<void>
 
-interface StoreValue extends AppState {
+  /* keys */
+  refreshKeys: () => Promise<void>
+  saveKey: (name: string, value: string, provider?: string) => Promise<void>
+  deleteKey: (name: string) => Promise<void>
+
+  /* mcp */
+  addServer: (input: { name: string; url: string; transport: McpTransport; auth?: string }) => Promise<McpServer>
+  updateServer: (id: string, patch: Record<string, unknown>) => Promise<McpServer>
+  removeServer: (id: string) => Promise<void>
+  refreshServer: (id: string) => Promise<McpServer>
+  callTool: (id: string, tool: string, args: Record<string, unknown>) => Promise<McpCallResult>
+
+  /* workspace mutations */
   notify: (message: string) => void
-  createChat: (prompt: string, agentId?: string) => string
+  toast: string | null
+  createChat: (
+    prompt: string,
+    agentId?: string,
+    skillIds?: string[],
+    toolCalls?: McpToolCall[],
+  ) => string
   patchChat: (id: string, patch: Partial<Chat>) => void
   updateChat: (id: string, updater: (chat: Chat) => Chat) => void
   appendMessage: (id: string, message: ChatMessage) => void
   patchMessage: (chatId: string, messageId: string, patch: Record<string, unknown>) => void
   deleteChat: (id: string) => void
   togglePin: (id: string) => void
-  queuePrompt: Record<string, string>
-  takeQueuedPrompt: (id: string) => string | undefined
+  queuePrompt: Record<string, QueueItem>
+  takeQueuedPrompt: (id: string) => QueueItem | undefined
   writeFile: (path: string, text: string, origin?: 'agent' | 'user') => void
   deleteFile: (path: string) => void
-  addSecret: (secret: Omit<Secret, 'id' | 'updated'>) => void
-  revealSecret: (id: string) => string | null
-  deleteSecret: (id: string) => void
   patchJob: (id: string, patch: Partial<Job>) => void
   addJob: (job: Job) => void
   patchMedia: (id: string, patch: Partial<MediaItem>) => void
@@ -77,39 +121,273 @@ interface StoreValue extends AppState {
   addAutomation: (automation: Automation) => void
   patchAutomation: (id: string, patch: Partial<Automation>) => void
   deleteAutomation: (id: string) => void
-  patchIntegration: (id: string, patch: Partial<Integration>) => void
-  addIntegration: (integration: Integration) => void
   patchAgent: (id: string, patch: Partial<Agent>) => void
   patchSettings: (patch: Partial<Settings>) => void
   setPosture: (posture: ApprovalPosture) => void
-  toast: string | null
+  addSkill: (draft: Pick<Skill, 'name' | 'description' | 'prompt'>) => Skill
+  patchSkill: (id: string, patch: Partial<Skill>) => void
+  deleteSkill: (id: string) => void
 }
 
 const Ctx = createContext<StoreValue | null>(null)
 
 const stamp = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
 
+const messageOf = (error: unknown): string =>
+  error instanceof ApiError ? error.message : error instanceof Error ? error.message : 'Something went wrong'
+
+function slugify(name: string, taken: string[]): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 32) || 'skill'
+  if (!taken.includes(base)) return base
+  let index = 2
+  while (taken.includes(`${base}-${index}`)) index += 1
+  return `${base}-${index}`
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [chats, setChats] = useState<Chat[]>(seedChats)
-  const [files, setFiles] = useState<WorkspaceFile[]>(seedFiles)
-  const [secrets, setSecrets] = useState<Secret[]>(seedSecrets)
-  const [audit, setAudit] = useState<AuditEvent[]>(seedAudit)
-  const [jobs, setJobs] = useState<Job[]>(seedJobs)
-  const [media, setMedia] = useState<MediaItem[]>(seedMedia)
-  const [automations, setAutomations] = useState<Automation[]>(seedAutomations)
-  const [integrations, setIntegrations] = useState<Integration[]>(seedIntegrations)
-  const [agents, setAgents] = useState<Agent[]>(seedAgents)
-  const [providers] = useState<Provider[]>(seedProviders)
-  const [settings, setSettings] = useState<Settings>(seedSettings)
+  const [status, setStatus] = useState<AuthStatus>('loading')
+  const [user, setUser] = useState<SessionUser | null>(null)
+
+  const [chats, setChats] = useState<Chat[]>(() => defaultWorkspace().chats)
+  const [files, setFiles] = useState<WorkspaceFile[]>(() => defaultWorkspace().files)
+  const [jobs, setJobs] = useState<Job[]>([])
+  const [media, setMedia] = useState<MediaItem[]>([])
+  const [automations, setAutomations] = useState<Automation[]>([])
+  const [agents, setAgents] = useState<Agent[]>(() => defaultWorkspace().agents)
+  const [skills, setSkills] = useState<Skill[]>(() => defaultSkills.map((item) => ({ ...item })))
+  const [settings, setSettings] = useState<Settings>(() => defaultWorkspace().settings)
+
+  const [keys, setKeys] = useState<ApiKeyMeta[]>([])
+  const [keyAudit, setKeyAudit] = useState<KeyEvent[]>([])
+  const [providerStatus, setProviderStatus] = useState<Record<string, ProviderStatus>>({})
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([])
+
   const [toast, setToast] = useState<string | null>(null)
-  const [queuePrompt, setQueuePrompt] = useState<Record<string, string>>({})
+  const [queuePrompt, setQueuePrompt] = useState<Record<string, QueueItem>>({})
+  const [saveState, setSaveState] = useState<SaveState>('idle')
+
+  const hydrated = useRef(false)
+  const loadingFor = useRef<string | null>(null)
 
   const notify = useCallback((message: string) => {
     setToast(message)
-    window.setTimeout(() => setToast((current) => (current === message ? null : current)), 3200)
+    window.setTimeout(() => setToast((current) => (current === message ? null : current)), 3600)
   }, [])
 
-  const createChat = useCallback((prompt: string, agentId = 'forge') => {
+  const applySnapshot = useCallback((raw: WorkspaceSnapshot) => {
+    const base = defaultWorkspace()
+    setChats(Array.isArray(raw.chats) ? raw.chats : base.chats)
+    setFiles(Array.isArray(raw.files) ? raw.files : base.files)
+    setJobs(Array.isArray(raw.jobs) ? raw.jobs : base.jobs)
+    setMedia(Array.isArray(raw.media) ? raw.media : base.media)
+    setAutomations(Array.isArray(raw.automations) ? raw.automations : base.automations)
+    setAgents(Array.isArray(raw.agents) && raw.agents.length ? raw.agents : base.agents)
+    setSkills(Array.isArray(raw.skills) ? raw.skills : base.skills)
+    const incoming = (raw.settings ?? {}) as Partial<Settings>
+    setSettings({
+      ...base.settings,
+      ...incoming,
+      thresholds: { ...base.settings.thresholds, ...(incoming.thresholds ?? {}) },
+    })
+  }, [])
+
+  const resetWorkspace = useCallback(() => {
+    const base = defaultWorkspace()
+    setChats(base.chats)
+    setFiles(base.files)
+    setJobs(base.jobs)
+    setMedia(base.media)
+    setAutomations(base.automations)
+    setAgents(base.agents)
+    setSkills(base.skills)
+    setSettings(base.settings)
+    setQueuePrompt({})
+    setSaveState('idle')
+  }, [])
+
+  const loadWorkspace = useCallback(async () => {
+    const { workspace } = await api.workspace()
+    applySnapshot(workspace)
+  }, [applySnapshot])
+
+  const refreshKeys = useCallback(async () => {
+    const inventory = await api.keys()
+    setKeys(inventory.keys)
+    setKeyAudit(inventory.audit)
+    setProviderStatus(inventory.providers)
+  }, [])
+
+  /* Session bootstrap */
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const { user: session } = await api.me()
+        if (cancelled) return
+        setUser(session)
+        setStatus('authed')
+      } catch {
+        if (!cancelled) setStatus('anon')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /* Hydrate everything the account owns, once per session. */
+  useEffect(() => {
+    if (status !== 'authed' || !user) return
+    if (loadingFor.current === user.id) return
+    loadingFor.current = user.id
+    hydrated.current = false
+    void (async () => {
+      try {
+        await loadWorkspace()
+        await Promise.all([
+          refreshKeys().catch(() => undefined),
+          api
+            .mcpServers()
+            .then((result) => setMcpServers(result.servers))
+            .catch(() => undefined),
+        ])
+      } catch (error) {
+        notify(`Workspace failed to load · ${messageOf(error)}`)
+      } finally {
+        hydrated.current = true
+        setSaveState('saved')
+      }
+    })()
+  }, [status, user, loadWorkspace, refreshKeys, notify])
+
+  /* Persist the serializable workspace on a short debounce. */
+  const snapshot = useMemo<WorkspaceSnapshot>(
+    () => ({ chats, files, jobs, media, automations, agents, skills, settings }),
+    [chats, files, jobs, media, automations, agents, skills, settings],
+  )
+  const snapshotRef = useRef(snapshot)
+  snapshotRef.current = snapshot
+
+  const saveNow = useCallback(async () => {
+    if (!hydrated.current) return
+    try {
+      await api.saveWorkspace(snapshotRef.current)
+      setSaveState('saved')
+    } catch (error) {
+      setSaveState('error')
+      notify(`Save failed · ${messageOf(error)}`)
+    }
+  }, [notify])
+
+  useEffect(() => {
+    if (!hydrated.current) return
+    setSaveState('saving')
+    const timer = window.setTimeout(() => {
+      void api
+        .saveWorkspace(snapshot)
+        .then(() => setSaveState('saved'))
+        .catch((error) => {
+          setSaveState('error')
+          notify(`Save failed · ${messageOf(error)}`)
+        })
+    }, 700)
+    return () => window.clearTimeout(timer)
+  }, [snapshot, notify])
+
+  useEffect(() => {
+    const flush = () => {
+      if (!hydrated.current) return
+      void api.saveWorkspace(snapshotRef.current).catch(() => undefined)
+    }
+    window.addEventListener('pagehide', flush)
+    return () => window.removeEventListener('pagehide', flush)
+  }, [])
+
+  /* Auth actions */
+  const signIn = useCallback(async (email: string, password: string) => {
+    const result = await api.login(email, password)
+    loadingFor.current = null
+    setUser(result.user)
+    setStatus('authed')
+  }, [])
+
+  const signUp = useCallback(async (name: string, email: string, password: string) => {
+    const result = await api.register(name, email, password)
+    loadingFor.current = null
+    setUser(result.user)
+    setStatus('authed')
+  }, [])
+
+  const signOut = useCallback(async () => {
+    await saveNow().catch(() => undefined)
+    await api.logout().catch(() => undefined)
+    hydrated.current = false
+    loadingFor.current = null
+    resetWorkspace()
+    setKeys([])
+    setKeyAudit([])
+    setProviderStatus({})
+    setMcpServers([])
+    setUser(null)
+    setStatus('anon')
+  }, [saveNow, resetWorkspace])
+
+  /* Keys */
+  const saveKey = useCallback(
+    async (name: string, value: string, provider?: string) => {
+      await api.saveKey(name, value, provider)
+      await refreshKeys()
+    },
+    [refreshKeys],
+  )
+
+  const deleteKey = useCallback(
+    async (name: string) => {
+      await api.deleteKey(name)
+      await refreshKeys()
+    },
+    [refreshKeys],
+  )
+
+  /* MCP */
+  const addServer = useCallback(
+    async (input: { name: string; url: string; transport: McpTransport; auth?: string }) => {
+      const { server } = await api.createMcp(input)
+      setMcpServers((prev) => [server, ...prev.filter((item) => item.id !== server.id)])
+      return server
+    },
+    [],
+  )
+
+  const updateServer = useCallback(async (id: string, patch: Record<string, unknown>) => {
+    const { server } = await api.updateMcp(id, patch)
+    setMcpServers((prev) => prev.map((item) => (item.id === id ? server : item)))
+    return server
+  }, [])
+
+  const removeServer = useCallback(async (id: string) => {
+    await api.deleteMcp(id)
+    setMcpServers((prev) => prev.filter((item) => item.id !== id))
+  }, [])
+
+  const refreshServer = useCallback(async (id: string) => {
+    const { server } = await api.refreshMcp(id)
+    setMcpServers((prev) => prev.map((item) => (item.id === id ? server : item)))
+    return server
+  }, [])
+
+  const callTool = useCallback(
+    (id: string, tool: string, args: Record<string, unknown>) => api.callMcp(id, tool, args),
+    [],
+  )
+
+  /* Chats */
+  const createChat = useCallback(
+    (prompt: string, agentId = 'forge', skillIds: string[] = [], toolCalls: McpToolCall[] = []) => {
     const id = `chat_${Math.random().toString(36).slice(2, 9)}`
     const title = prompt.length > 58 ? `${prompt.slice(0, 55)}…` : prompt
     const chat: Chat = {
@@ -123,11 +401,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       createdAt: 'Today',
       messages: [],
       tags: [],
+      ...(skillIds.length ? { skillIds } : {}),
     }
     setChats((prev) => [chat, ...prev])
-    setQueuePrompt((prev) => ({ ...prev, [id]: prompt }))
+    setQueuePrompt((prev) => ({ ...prev, [id]: { text: prompt, skillIds, toolCalls } }))
     return id
-  }, [])
+    },
+    [],
+  )
 
   const patchChat = useCallback((id: string, patch: Partial<Chat>) => {
     setChats((prev) => prev.map((chat) => (chat.id === id ? { ...chat, ...patch } : chat)))
@@ -140,30 +421,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const appendMessage = useCallback((id: string, message: ChatMessage) => {
     setChats((prev) =>
       prev.map((chat) =>
-        chat.id === id
-          ? { ...chat, updated: 'just now', messages: [...chat.messages, message] }
-          : chat,
+        chat.id === id ? { ...chat, updated: 'just now', messages: [...chat.messages, message] } : chat,
       ),
     )
   }, [])
 
-  const patchMessage = useCallback(
-    (chatId: string, messageId: string, patch: Record<string, unknown>) => {
-      setChats((prev) =>
-        prev.map((chat) =>
-          chat.id === chatId
-            ? {
-                ...chat,
-                messages: chat.messages.map((message) =>
-                  message.id === messageId ? ({ ...message, ...patch } as ChatMessage) : message,
-                ),
-              }
-            : chat,
-        ),
-      )
-    },
-    [],
-  )
+  const patchMessage = useCallback((chatId: string, messageId: string, patch: Record<string, unknown>) => {
+    setChats((prev) =>
+      prev.map((chat) =>
+        chat.id === chatId
+          ? {
+              ...chat,
+              messages: chat.messages.map((message) =>
+                message.id === messageId ? ({ ...message, ...patch } as ChatMessage) : message,
+              ),
+            }
+          : chat,
+      ),
+    )
+  }, [])
 
   const deleteChat = useCallback((id: string) => {
     setChats((prev) => prev.filter((chat) => chat.id !== id))
@@ -175,26 +451,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const takeQueuedPrompt = useCallback(
     (id: string) => {
-      const text = queuePrompt[id]
-      if (!text) return undefined
+      const item = queuePrompt[id]
+      if (!item) return undefined
       setQueuePrompt((prev) => {
         const next = { ...prev }
         delete next[id]
         return next
       })
-      return text
+      return item
     },
     [queuePrompt],
   )
 
+  /* Files */
   const writeFile = useCallback((path: string, text: string, origin: 'agent' | 'user' = 'agent') => {
     setFiles((prev) => {
       const bytes = new TextEncoder().encode(text).length
       const next = prev.filter((file) => file.path !== path)
-      return [
-        ...next,
-        { path, text, bytes, updated: 'just now', origin },
-      ].sort((a, b) => a.path.localeCompare(b.path))
+      return [...next, { path, text, bytes, updated: 'just now', origin }].sort((a, b) =>
+        a.path.localeCompare(b.path),
+      )
     })
   }, [])
 
@@ -202,106 +478,152 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setFiles((prev) => prev.filter((file) => file.path !== path))
   }, [])
 
-  const addSecret = useCallback((secret: Omit<Secret, 'id' | 'updated'>) => {
-    const created: Secret = {
-      ...secret,
-      id: `sec_${Math.random().toString(36).slice(2, 7)}`,
-      updated: 'just now',
-    }
-    setSecrets((prev) => [...prev, created])
-    setAudit((prev) => [
-      { id: `a_${Math.random().toString(36).slice(2, 7)}`, action: 'created', key: secret.key, actor: 'amos-donn', at: 'just now', outcome: 'ok' },
-      ...prev,
-    ])
-  }, [])
-
-  const revealSecret = useCallback(
-    (id: string) => {
-      const secret = secrets.find((item) => item.id === id)
-      if (!secret) return null
-      setAudit((prev) => [
-        { id: `a_${Math.random().toString(36).slice(2, 7)}`, action: 'revealed', key: secret.key, actor: 'amos-donn', at: 'just now', outcome: 'ok' },
-        ...prev,
-      ])
-      return secret.value
-    },
-    [secrets],
-  )
-
-  const deleteSecret = useCallback((id: string) => {
-    setSecrets((prev) => {
-      const secret = prev.find((item) => item.id === id)
-      if (secret) {
-        setAudit((log) => [
-          { id: `a_${Math.random().toString(36).slice(2, 7)}`, action: 'deleted', key: secret.key, actor: 'amos-donn', at: 'just now', outcome: 'ok' },
-          ...log,
-        ])
-      }
-      return prev.filter((item) => item.id !== id)
-    })
-  }, [])
-
+  /* Jobs, media, automations, agents */
   const patchJob = useCallback((id: string, patch: Partial<Job>) => {
     setJobs((prev) => prev.map((job) => (job.id === id ? { ...job, ...patch } : job)))
   }, [])
-
   const addJob = useCallback((job: Job) => setJobs((prev) => [job, ...prev]), [])
-
   const patchMedia = useCallback((id: string, patch: Partial<MediaItem>) => {
     setMedia((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)))
   }, [])
-
   const addMedia = useCallback((item: MediaItem) => setMedia((prev) => [item, ...prev]), [])
-
   const addAutomation = useCallback((automation: Automation) => {
     setAutomations((prev) => [automation, ...prev])
   }, [])
-
   const patchAutomation = useCallback((id: string, patch: Partial<Automation>) => {
     setAutomations((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)))
   }, [])
-
   const deleteAutomation = useCallback((id: string) => {
     setAutomations((prev) => prev.filter((item) => item.id !== id))
   }, [])
-
-  const patchIntegration = useCallback((id: string, patch: Partial<Integration>) => {
-    setIntegrations((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)))
-  }, [])
-
-  const addIntegration = useCallback((integration: Integration) => {
-    setIntegrations((prev) => [integration, ...prev])
-  }, [])
-
   const patchAgent = useCallback((id: string, patch: Partial<Agent>) => {
     setAgents((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)))
   }, [])
 
+  /* Settings */
   const patchSettings = useCallback((patch: Partial<Settings>) => {
     setSettings((prev) => ({ ...prev, ...patch }))
   }, [])
-
   const setPosture = useCallback((posture: ApprovalPosture) => {
     setSettings((prev) => ({ ...prev, posture }))
   }, [])
 
+  /* Skills */
+  const addSkill = useCallback((draft: Pick<Skill, 'name' | 'description' | 'prompt'>) => {
+    const skill: Skill = {
+      id: `skill_${Math.random().toString(36).slice(2, 9)}`,
+      name: draft.name.trim(),
+      slug: '',
+      description: draft.description.trim(),
+      prompt: draft.prompt.trim(),
+      enabled: true,
+    }
+    setSkills((prev) => {
+      skill.slug = slugify(skill.name, prev.map((item) => item.slug))
+      return [...prev, skill]
+    })
+    return skill
+  }, [])
+
+  const patchSkill = useCallback((id: string, patch: Partial<Skill>) => {
+    setSkills((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item
+        const next = { ...item, ...patch }
+        if (patch.name !== undefined && patch.slug === undefined) {
+          next.slug = slugify(patch.name, prev.filter((other) => other.id !== id).map((other) => other.slug))
+        }
+        return next
+      }),
+    )
+  }, [])
+
+  const deleteSkill = useCallback((id: string) => {
+    setSkills((prev) => prev.filter((item) => item.id !== id))
+  }, [])
+
+  /* Derived */
+  const providers = useMemo<Provider[]>(
+    () =>
+      providerCatalog.map((definition) => {
+        const state = providerStatus[definition.id]
+        return {
+          id: definition.id,
+          name: definition.name,
+          mark: definition.mark,
+          status: state?.configured ? 'connected' : 'missing',
+          ...(state?.masked ? { keyMask: state.masked } : {}),
+          models: definition.models,
+          note: definition.note,
+          tone: definition.tone,
+          ...(state?.source ? { source: state.source } : {}),
+        }
+      }),
+    [providerStatus],
+  )
+
+  const usage = useMemo<UsageSummary>(() => {
+    let spend = 0
+    let saved = 0
+    let decisions = 0
+    let escalations = 0
+    let promptTokens = 0
+    for (const chat of chats) {
+      for (const message of chat.messages) {
+        if (message.kind !== 'trace') continue
+        decisions += 1
+        promptTokens += message.trace.s1.promptTokens
+        spend += message.trace.s1.costUsd + (message.trace.escalation?.s2.costUsd ?? 0)
+        saved += message.trace.savedUsd
+        if (message.trace.route === 's2') escalations += 1
+      }
+    }
+    return {
+      spend,
+      saved,
+      decisions,
+      escalations,
+      promptTokens,
+      fastPath: decisions ? Math.round(((decisions - escalations) / decisions) * 100) : 100,
+    }
+  }, [chats])
+
   const value = useMemo<StoreValue>(
     () => ({
+      status,
+      user,
+      signIn,
+      signUp,
+      signOut,
       chats,
       files,
-      secrets,
-      audit,
       jobs,
       media,
       automations,
-      integrations,
       agents,
-      providers,
-      lanes: seedLanes,
-      quotas: seedQuotas,
+      skills,
       settings,
-      toast,
+      providers,
+      keys,
+      keyAudit,
+      providerStatus,
+      mcpServers,
+      lanes,
+      quotas,
+      usage,
+      saveState,
+      saveNow,
+      reloadWorkspace: loadWorkspace,
+      refreshKeys,
+      saveKey,
+      deleteKey,
+      addServer,
+      updateServer,
+      removeServer,
+      refreshServer,
+      callTool,
       notify,
+      toast,
       createChat,
       patchChat,
       updateChat,
@@ -313,9 +635,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       takeQueuedPrompt,
       writeFile,
       deleteFile,
-      addSecret,
-      revealSecret,
-      deleteSecret,
       patchJob,
       addJob,
       patchMedia,
@@ -323,26 +642,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       addAutomation,
       patchAutomation,
       deleteAutomation,
-      patchIntegration,
-      addIntegration,
       patchAgent,
       patchSettings,
       setPosture,
+      addSkill,
+      patchSkill,
+      deleteSkill,
     }),
     [
+      status,
+      user,
+      signIn,
+      signUp,
+      signOut,
       chats,
       files,
-      secrets,
-      audit,
       jobs,
       media,
       automations,
-      integrations,
       agents,
-      providers,
+      skills,
       settings,
-      toast,
+      providers,
+      keys,
+      keyAudit,
+      providerStatus,
+      mcpServers,
+      usage,
+      saveState,
+      saveNow,
+      loadWorkspace,
+      refreshKeys,
+      saveKey,
+      deleteKey,
+      addServer,
+      updateServer,
+      removeServer,
+      refreshServer,
+      callTool,
       notify,
+      toast,
       createChat,
       patchChat,
       updateChat,
@@ -354,9 +693,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       takeQueuedPrompt,
       writeFile,
       deleteFile,
-      addSecret,
-      revealSecret,
-      deleteSecret,
       patchJob,
       addJob,
       patchMedia,
@@ -364,10 +700,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       addAutomation,
       patchAutomation,
       deleteAutomation,
-      patchIntegration,
       patchAgent,
       patchSettings,
       setPosture,
+      addSkill,
+      patchSkill,
+      deleteSkill,
     ],
   )
 

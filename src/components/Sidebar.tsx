@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import {
   ArrowUpRight,
+  BookOpen,
   ChevronDown,
   FolderClosed,
   KeyRound,
@@ -18,9 +19,15 @@ import { cn, money } from '../lib/format'
 import { ProfileMenu } from './ProfileMenu'
 import { StatusPill } from './ui'
 
-const toolLinks: Array<{ view: View; label: string; icon: typeof FolderClosed; key: 'files' | 'secrets' | 'jobs' | 'media' | 'automations' }> = [
+const toolLinks: Array<{
+  view: View
+  label: string
+  icon: typeof FolderClosed
+  key: 'files' | 'keys' | 'jobs' | 'media' | 'automations' | 'skills'
+}> = [
   { view: { name: 'files' }, label: 'Files', icon: FolderClosed, key: 'files' },
-  { view: { name: 'vault' }, label: 'Vault', icon: KeyRound, key: 'secrets' },
+  { view: { name: 'vault' }, label: 'Vault', icon: KeyRound, key: 'keys' },
+  { view: { name: 'skills' }, label: 'Skills', icon: BookOpen, key: 'skills' },
   { view: { name: 'media' }, label: 'Media', icon: Sparkles, key: 'media' },
   { view: { name: 'automations' }, label: 'Automations', icon: Timer, key: 'automations' },
   { view: { name: 'jobs' }, label: 'Jobs', icon: ListChecks, key: 'jobs' },
@@ -37,16 +44,17 @@ export function Sidebar({
   onNewChat: () => void
   onShortcuts: () => void
 }) {
-  const { chats, files, secrets, jobs, media, automations, togglePin } = useStore()
+  const { chats, files, keys, skills, jobs, media, automations, usage, togglePin } = useStore()
   const [query, setQuery] = useState('')
   const [toolsOpen, setToolsOpen] = useState(true)
 
   const counts = {
     files: files.length,
-    secrets: secrets.length,
+    keys: keys.length,
     jobs: jobs.filter((job) => job.state !== 'succeeded').length,
     media: media.length,
     automations: automations.filter((item) => item.enabled).length,
+    skills: skills.filter((item) => item.enabled).length,
   }
 
   const filtered = useMemo(() => {
@@ -72,7 +80,12 @@ export function Sidebar({
           <span className="ws-name">sosystem</span>
           <span className="ws-plan">personal workspace</span>
         </div>
-        <button type="button" className="icon-btn" aria-label="Settings" onClick={() => onNavigate({ name: 'settings' })}>
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Settings"
+          onClick={() => onNavigate({ name: 'settings' })}
+        >
           <ChevronDown size={14} />
         </button>
       </div>
@@ -125,7 +138,11 @@ export function Sidebar({
           </div>
         ))}
 
-        {!filtered.length ? <p className="side-empty">No chat matches “{query}”.</p> : null}
+        {!filtered.length ? (
+          <p className="side-empty">
+            {chats.length ? `No chat matches “${query}”.` : 'No chats yet. Ask the workspace for something.'}
+          </p>
+        ) : null}
 
         <button type="button" className="side-label side-label-btn" onClick={() => setToolsOpen((value) => !value)}>
           Tools <ChevronDown size={11} className={cn('chev', !toolsOpen && 'chev-closed')} />
@@ -162,8 +179,12 @@ export function Sidebar({
 
       <div className="side-foot">
         <div className="usage-mini">
-          <span className="mono">{money(4.12)} <span className="faint">of $25</span></span>
-          <span className="tiny faint">91% fast-path</span>
+          <span className="mono">
+            {money(usage.spend)} <span className="faint">this workspace</span>
+          </span>
+          <span className="tiny faint">
+            {usage.decisions ? `${usage.fastPath}% fast-path` : 'no decisions yet'}
+          </span>
         </div>
         <ProfileMenu onNavigate={onNavigate} onShortcuts={onShortcuts} />
       </div>

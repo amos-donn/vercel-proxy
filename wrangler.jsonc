@@ -13,18 +13,12 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"]
-  }
-
-  // Next pass — Durable Object per thread + D1 for run state.
-  // "durable_objects": {
-  //   "bindings": [{ "name": "THREAD", "class_name": "ThreadAgent" }]
-  // },
-  // "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ThreadAgent"] }],
-  // "d1_databases": [
-  //   {
-  //     "binding": "DB",
-  //     "database_name": "sosystem",
-  //     "database_id": "<id from `wrangler d1 create sosystem`>"
-  //   }
-  // ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sosystem",
+      "database_id": "26e3f9c4-6221-40f3-bc54-cf6cf16f2b28"
+    }
+  ]
 }

@@ -61,7 +61,7 @@ export function AutomationsPage({ onNavigate }: { onNavigate: (view: View) => vo
     setName('')
     setPrompt('')
     setCadence(1_440)
-    notify('Automation created · schedule is in-memory for this session')
+    notify('Automation saved · Run now executes it immediately')
   }
 
   const active = automations.filter((item) => item.enabled).length
@@ -155,8 +155,8 @@ export function AutomationsPage({ onNavigate }: { onNavigate: (view: View) => vo
       <div className="auto-note">
         <ArrowRight size={13} />
         <p>
-          Schedules are in-memory in this pass. The Worker-side cron and D1 run log land with storage;
-          until then, “Run now” is the honest way to exercise the flow.
+          Cadence and prompt persist with the workspace. Nothing fires on a timer yet: the scheduler
+          and its D1 run log are next, so “Run now” is how you execute the flow today.
         </p>
       </div>
 

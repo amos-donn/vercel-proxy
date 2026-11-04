@@ -2,7 +2,7 @@
 
 Two layers exist in this repository:
 
-1. **What runs now** — a React SPA with a deterministic dual-process engine, in-memory state, and a Worker that serves the SPA plus optional provider proxies.
+1. **What runs now** — a React SPA with a deterministic dual-process engine, a D1-backed account workspace, encrypted BYOK keys, an MCP client, and a Worker that serves the SPA plus the API.
 2. **What the UI is designed for** — a durable Cloudflare runtime with D1, a Durable Object per thread, Workflows for jobs and approvals, and an encrypted BYOK vault.
 
 This document keeps the two separate so the prototype is not mistaken for the production runtime.
@@ -203,14 +203,21 @@ npx wrangler secret put SYSTEM2_API_KEY
 
 Optional vars: `TYPESAFE_BASE_URL`, `SYSTEM2_BASE_URL`, `SYSTEM2_MODEL`.
 
-Target: `https://sosystem.amos-donn.workers.dev`. D1 is not provisioned; the block in `wrangler.jsonc` is commented out.
+Target: `https://sosystem.amos-donn.workers.dev`. D1 database `sosystem` is bound as `DB` in `wrangler.jsonc`; the Worker creates its tables on the first request.
 
 ## 11. Migration order
 
+Done:
+
 1. Auth + workspace scoping.
-2. D1 schema + repository behind `StoreProvider` (same action names).
-3. Encrypted vault + provider key rotation.
-4. ThreadAgent DO + SSE replay.
-5. Workflow jobs/cron using the existing job states.
-6. Real tools: sandbox shell, files, GitHub App, MCP client, Gemini transcription.
+2. D1 schema + snapshot persistence behind the same `StoreProvider` action names.
+3. Encrypted provider keys, rotation and audit.
+4. MCP client: initialize, `tools/list`, `tools/call`, encrypted bearer tokens.
+5. Skills as reusable System 2 instructions with `/` attachment.
+
+Next:
+
+1. ThreadAgent DO + SSE replay.
+2. Workflow jobs/cron using the existing job states.
+3. Real tools: sandbox shell, files, GitHub App, Gemini transcription.
 7. Billing ledger and cap enforcement before model calls.

@@ -1,47 +1,55 @@
 import { useState } from 'react'
 import {
-  Check,
   ChevronRight,
   Cloud,
   Copy,
   Database,
   KeyRound,
   Loader2,
-  Lock,
-  Rocket,
+  LogOut,
   ShieldAlert,
   Sparkles,
   Terminal,
+  UserRound,
   Zap,
 } from 'lucide-react'
 import { useStore } from '../store'
-import type { ApprovalPosture } from '../types'
-import { cn, money } from '../lib/format'
-import { Chip, Field, Meter, Modal, Segmented, Toggle } from '../components/ui'
+import type { ApprovalPosture, View } from '../types'
+import { api } from '../lib/api'
+import { cn, money, tokens } from '../lib/format'
+import { Chip, Field, Meter, Segmented, Toggle } from '../components/ui'
 
 const defaultThresholds = { accept: 0.62, escalate: 0.55, risky: 0.5 }
 
-export function SettingsPage() {
-  const { settings, providers, patchSettings, setPosture, notify } = useStore()
+export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void }) {
+  const {
+    settings,
+    providers,
+    user,
+    keys,
+    usage,
+    chats,
+    files,
+    saveState,
+    patchSettings,
+    setPosture,
+    signOut,
+    notify,
+  } = useStore()
   const [health, setHealth] = useState<'idle' | 'checking' | 'ok' | 'down'>('idle')
   const [healthText, setHealthText] = useState('Not checked yet.')
-  const [keyOpen, setKeyOpen] = useState(false)
-  const [keyName, setKeyName] = useState('')
-  const [keyValue, setKeyValue] = useState('')
 
   const testRuntime = async () => {
     setHealth('checking')
     setHealthText('Requesting /api/health…')
     try {
-      const response = await fetch('/api/health')
-      const type = response.headers.get('content-type') ?? ''
-      if (!type.includes('application/json')) {
-        throw new Error('No Worker attached — Vite answered with HTML.')
-      }
-      const body = (await response.json()) as { ok?: boolean; jev?: boolean; system2?: boolean }
+      const body = await api.health()
+      const ready = providers.filter((provider) => provider.status === 'connected').length
       setHealth(body.ok ? 'ok' : 'down')
       setHealthText(
-        `Worker ok · Jev ${body.jev ? 'key present' : 'key missing'} · System 2 ${body.system2 ? 'key present' : 'key missing'}`,
+        `Worker ok · Jev ${body.jev ? 'ready' : 'needs a key'} · System 2 ${
+          body.system2 ? 'ready' : 'needs a key'
+        } · ${ready}/${providers.length} providers · custody ${body.keyCustody}`,
       )
     } catch (error) {
       setHealth('down')
@@ -64,11 +72,11 @@ export function SettingsPage() {
         <div>
           <h1>Settings</h1>
           <p>
-            The harness defaults: how cheap the fast path must be, when the heavy model wakes, and
-            where a human is required. Changes are live and in-memory.
+            Harness defaults: how cheap the fast path must be, when the heavy model wakes, and where a
+            human is required. Everything here saves to your workspace.
           </p>
         </div>
-        <Chip tone="neutral">prototype · no accounts</Chip>
+        <Chip tone="neutral">{saveState === 'saved' ? 'saved to D1' : saveState === 'saving' ? 'saving…' : 'live'}</Chip>
       </header>
 
       <div className="settings-grid">
@@ -87,7 +95,8 @@ export function SettingsPage() {
           />
           <p className="setting-copy">
             Simulated is deterministic and needs no keys: it exercises routing, tools, gates and costs.
-            Live posts to <code>/api/jev</code> and <code>/api/system2</code>; the Worker holds the keys.
+            Live posts to <code>/api/jev</code> and <code>/api/system2</code>; the Worker uses the key you
+            stored for the selected model.
           </p>
           <div className="health-row">
             <button type="button" className="btn btn-sm" onClick={() => void testRuntime()} disabled={health === 'checking'}>
@@ -98,7 +107,7 @@ export function SettingsPage() {
           {settings.runtime === 'live' ? (
             <div className="inline-warn">
               <ShieldAlert size={12} />
-              Live mode falls back to simulation per turn when a route is missing or the key is not set.
+              If the provider call fails, the turn falls back to simulation and says so on the trace.
             </div>
           ) : null}
         </section>
@@ -157,9 +166,9 @@ export function SettingsPage() {
             <div><h2>System 2</h2><span className="tiny faint">plans, judgement, prose</span></div>
             <Sparkles size={15} />
           </header>
-          <Field label="Default lane">
+          <Field label="Default lane" hint="The key for this model's provider must be in the Vault.">
             <select className="input mono" value={settings.s2Model} onChange={(event) => patchSettings({ s2Model: event.target.value })}>
-              {['claude-sonnet-5', 'claude-opus-5', 'gpt-5.2', 'gpt-5-mini'].map((model) => (
+              {['claude-sonnet-5', 'claude-opus-5', 'gpt-5.2', 'gpt-5-mini', 'gemini-3-pro', 'openai/gpt-5.2'].map((model) => (
                 <option key={model} value={model}>{model}</option>
               ))}
             </select>
@@ -177,11 +186,12 @@ export function SettingsPage() {
             />
           </Field>
           <div className="stat-rows">
-            <div><span>Baseline / escalated turn</span><span className="mono">{money(0.041)}</span></div>
-            <div><span>Fast path / turn</span><span className="mono">{money(0.0003)}</span></div>
-            <div><span>Budget this month</span><span className="mono">{money(4.12)} / {money(25)}</span></div>
+            <div><span>Spend in this workspace</span><span className="mono">{money(usage.spend)}</span></div>
+            <div><span>Saved vs. always-System 2</span><span className="mono">{money(Math.max(0, usage.saved))}</span></div>
+            <div><span>Typed decisions</span><span className="mono">{usage.decisions}</span></div>
+            <div><span>Prompt tokens</span><span className="mono">{tokens(usage.promptTokens)}</span></div>
           </div>
-          <Meter value={16} tone="lime" label="Monthly spend" />
+          <Meter value={usage.fastPath} tone="lime" label="Fast-path share" />
         </section>
 
         <section className="panel setting-section">
@@ -203,7 +213,7 @@ export function SettingsPage() {
                 className={cn('posture-card', settings.posture === value && 'is-on')}
                 onClick={() => setPosture(value)}
               >
-                <span className="posture-radio">{settings.posture === value ? <Check size={10} /> : null}</span>
+                <span className="posture-radio">{settings.posture === value ? '✓' : null}</span>
                 <span>
                   <strong>{label}</strong>
                   <span>{copyText}</span>
@@ -216,7 +226,7 @@ export function SettingsPage() {
 
         <section className="panel setting-section span-2">
           <header className="panel-head">
-            <div><h2>Providers</h2><span className="tiny faint">BYOK · keys stay in the Worker</span></div>
+            <div><h2>Providers</h2><span className="tiny faint">BYOK · encrypted in D1</span></div>
             <KeyRound size={15} />
           </header>
           <div className="provider-list">
@@ -229,26 +239,67 @@ export function SettingsPage() {
                 </div>
                 <span className="provider-models mono tiny">{provider.models} models</span>
                 <span className="provider-key mono tiny">{provider.keyMask ?? 'no key'}</span>
-                {provider.status === 'connected' ? <Chip tone="lime">connected</Chip> : <Chip tone="amber">missing</Chip>}
-                <button
-                  type="button"
-                  className="link-btn"
-                  onClick={() => {
-                    setKeyName(provider.name)
-                    setKeyOpen(true)
-                  }}
-                >
-                  {provider.status === 'connected' ? 'Rotate' : 'Add key'} <ChevronRight size={10} />
-                </button>
+                {provider.status === 'connected' ? (
+                  <Chip tone="lime">{provider.source === 'worker' ? 'worker secret' : 'connected'}</Chip>
+                ) : (
+                  <Chip tone="amber">missing</Chip>
+                )}
               </div>
             ))}
           </div>
-          <div className="inline-note">
-            <Lock size={12} />
-            Keys are set as Worker secrets, not in this UI. <code>TYPESAFE_API_KEY</code>,{' '}
-            <code>SYSTEM2_API_KEY</code>, optional <code>SYSTEM2_BASE_URL</code> and{' '}
-            <code>SYSTEM2_MODEL</code>.
+          <div className="setting-actions">
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => onNavigate({ name: 'vault' })}>
+              Manage keys <ChevronRight size={12} />
+            </button>
+            <span className="tiny faint">
+              {keys.filter((key) => key.source === 'user').length} stored by you ·{' '}
+              {keys.filter((key) => key.source === 'worker').length} from Worker secrets
+            </span>
           </div>
+        </section>
+
+        <section className="panel setting-section">
+          <header className="panel-head">
+            <div><h2>Account</h2><span className="tiny faint">this session</span></div>
+            <UserRound size={15} />
+          </header>
+          <div className="stat-rows">
+            <div><span>Name</span><span className="mono">{user?.name ?? '—'}</span></div>
+            <div><span>Email</span><span className="mono">{user?.email ?? '—'}</span></div>
+            <div>
+              <span>Member since</span>
+              <span className="mono">
+                {user ? new Date(user.createdAt).toLocaleDateString() : '—'}
+              </span>
+            </div>
+            <div><span>Session</span><span className="mono">HttpOnly cookie · 30 days</span></div>
+          </div>
+          <div className="setting-actions">
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void signOut()}
+            >
+              <LogOut size={12} /> Sign out
+            </button>
+          </div>
+        </section>
+
+        <section className="panel setting-section">
+          <header className="panel-head">
+            <div><h2>Workspace</h2><span className="tiny faint">saved per account</span></div>
+            <Database size={15} />
+          </header>
+          <div className="stat-rows">
+            <div><span>Persistence</span><span className="mono">D1 · snapshot</span></div>
+            <div><span>Last save</span><span className="mono">{saveState}</span></div>
+            <div><span>Chats</span><span className="mono">{chats.length}</span></div>
+            <div><span>Files</span><span className="mono">{files.length}</span></div>
+          </div>
+          <p className="setting-copy">
+            The workspace is a JSON snapshot written on a short debounce and again when the tab closes.
+            Provider keys and MCP tokens live in their own encrypted columns, not in the snapshot.
+          </p>
         </section>
 
         <section className="panel setting-section">
@@ -265,30 +316,12 @@ export function SettingsPage() {
             label="Reduce motion"
             hint="Stops streaming cadence and animated dots."
           />
-          <Toggle checked={false} onChange={() => notify('Theme switching lands with the provider pass')} label="Light theme" hint="Not built yet; the dark shell is the only theme." disabled />
-        </section>
-
-        <section className="panel setting-section">
-          <header className="panel-head">
-            <div><h2>Workspace</h2><span className="tiny faint">no accounts, no storage</span></div>
-            <Database size={15} />
-          </header>
-          <div className="stat-rows">
-            <div><span>Auth</span><span className="mono">not wired</span></div>
-            <div><span>Persistence</span><span className="mono">memory only</span></div>
-            <div><span>D1</span><span className="mono">not provisioned</span></div>
-            <div><span>Deploy target</span><span className="mono">sosystem.amos-donn.workers.dev</span></div>
-          </div>
-          <p className="setting-copy">
-            Reloading resets chats, files, secrets and jobs. That is deliberate for this pass; the
-            storage schema and auth land next.
-          </p>
         </section>
 
         <section className="panel setting-section span-2">
           <header className="panel-head">
             <div><h2>Deploy</h2><span className="tiny faint">Cloudflare Workers</span></div>
-            <Rocket size={15} />
+            <Terminal size={15} />
           </header>
           <div className="deploy-grid">
             <div className="deploy-card">
@@ -299,68 +332,33 @@ export function SettingsPage() {
               </button>
             </div>
             <div className="deploy-card">
-              <span className="deploy-label">Secrets</span>
-              <code>wrangler secret put TYPESAFE_API_KEY</code>
-              <code>wrangler secret put SYSTEM2_API_KEY</code>
+              <span className="deploy-label">Database</span>
+              <code>D1 · sosystem · binding DB</code>
+              <span className="tiny faint">Tables are created on the first API request.</span>
             </div>
           </div>
           <div className="command-row">
             <Terminal size={12} />
-            <code>npm run build &amp;&amp; npx wrangler deploy</code>
-            <button type="button" className="link-btn" onClick={() => copy('npm run build && npx wrangler deploy', 'Deploy command')}>
+            <code>git push origin master</code>
+            <button type="button" className="link-btn" onClick={() => copy('git push origin master', 'Push command')}>
               <Copy size={10} /> copy
             </button>
           </div>
           <p className="setting-note">
-            <Cloud size={11} /> The Worker serves the SPA, <code>/api/health</code>, <code>/api/jev</code> and{' '}
-            <code>/api/system2</code>. Secrets are read at request time and never returned.
+            <Cloud size={11} /> Workers Builds runs <code>npm run build</code> and{' '}
+            <code>npx wrangler deploy</code> on every push to <code>master</code>. Add an optional{' '}
+            <code>SOSYSTEM_SECRET</code> to seal keys with your own secret instead of the generated
+            deployment key.
           </p>
         </section>
       </div>
 
       <footer className="settings-foot">
-        <span className="mono">sosystem v0.2.0</span>
+        <span className="mono">sosystem v0.3.0</span>
         <span>Built for Cloudflare Workers · React 19 · Jev {settings.jevModel}</span>
         <span className="grow" />
-        <span>No accounts · no storage · BYOK</span>
+        <span>D1 workspace · encrypted BYOK · MCP</span>
       </footer>
-
-      <Modal
-        open={keyOpen}
-        onClose={() => setKeyOpen(false)}
-        title={`${keyName} key`}
-        subtitle="Keys are sealed as Worker secrets. This form is intentionally not a credential store."
-        footer={
-          <>
-            <button type="button" className="btn btn-quiet" onClick={() => setKeyOpen(false)}>Cancel</button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!keyValue.trim()}
-              onClick={() => {
-                setKeyValue('')
-                setKeyOpen(false)
-                notify('Use wrangler secret put, or the Sites dashboard, so the key never touches the client')
-              }}
-            >
-              I understand
-            </button>
-          </>
-        }
-      >
-        <div className="inline-warn">
-          <ShieldAlert size={12} />
-          Do not paste a production key into this prototype: it has no encrypted storage yet. Set it with
-          Wrangler or the hosting dashboard.
-        </div>
-        <Field label="Wrangler command" hint="Run this locally in the repo.">
-          <input className="input mono" readOnly value={`npx wrangler secret put ${keyName.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_API_KEY`} />
-        </Field>
-        <Field label="Paste to verify the field works (not stored)" htmlFor="key-value">
-          <input id="key-value" className="input mono" type="password" value={keyValue} onChange={(event) => setKeyValue(event.target.value)} autoComplete="off" />
-        </Field>
-        <p className="tiny faint">The value is discarded immediately. Nothing is written to disk or state.</p>
-      </Modal>
     </div>
   )
 }

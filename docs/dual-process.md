@@ -64,7 +64,7 @@ respond | search_files | read_file | write_file | transcribe | inspect_job | esc
 
 ## 3. Routing
 
-Defaults in `src/data/mock.ts`; editable in Settings.
+Defaults in `src/data/defaults.ts`; editable in Settings and saved to the account's workspace.
 
 ```ts
 thresholds = { accept: 0.62, escalate: 0.55, risky: 0.50 }
@@ -185,7 +185,7 @@ Prompt tokens are estimated from the goal length, file count and history. The di
 
 **Change thresholds**
 
-Edit in Settings; the changes are live. The defaults are in `src/data/mock.ts` so a reset is meaningful.
+Edit in Settings; the changes are live and persist to D1. The defaults are in `src/data/defaults.ts` so a reset is meaningful.
 
 **Swap the System 2 lane**
 
@@ -204,6 +204,8 @@ The simulation is deterministic:
 - “draft release notes” → write decision, S2 plan, approval gate.
 - “write a plan for X” with Think harder → forced S2.
 
-Use the chat inspector to confirm the route, threshold marker, probabilities and savings. Approve the write and check Files for the real in-memory file; deny and confirm nothing changed.
+Use the chat inspector to confirm the route, threshold marker, probabilities and savings. Approve the write and check Files for the workspace file; deny and confirm nothing changed.
 
-For the live path, set Worker secrets, flip Settings → Live Worker, run the health probe, then send a greeting (S1) and a drafting request (S2). If either route is missing, the notice explains the fallback instead of leaving an empty turn.
+For the live path, add keys in Vault (or set Worker-level provider secrets), flip Settings → Live Worker, run the health probe, then send a greeting (S1) and a drafting request (S2). If either route is missing a key, the notice explains the fallback instead of leaving an empty turn.
+
+Skills and MCP output both enter the System 2 request: a skill contributes its instruction, and an attached MCP call runs before the turn so its result arrives as evidence. Neither can widen the tool belt or skip an approval gate.

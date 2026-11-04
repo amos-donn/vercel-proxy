@@ -1,77 +1,78 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
-  Copy,
-  Eye,
-  EyeOff,
+  Fingerprint,
   KeyRound,
   Lock,
   Plus,
+  RefreshCw,
   ShieldCheck,
   Trash2,
 } from 'lucide-react'
 import { useStore } from '../store'
-import type { AuditEvent, Secret } from '../types'
-import { Chip, CheckRow, Empty, Field, Modal } from '../components/ui'
+import { providers as providerCatalog } from '../data/providers'
+import { api } from '../lib/api'
+import { cn } from '../lib/format'
+import { Chip, Empty, Field, Modal } from '../components/ui'
 
-const agentScopes = ['Forge', 'Scout', 'Courier', 'Sentinel']
+const timeAgo = (at: number): string => {
+  if (!at) return '—'
+  const diff = Date.now() - at
+  if (diff < 60_000) return 'just now'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
+  return new Date(at).toLocaleDateString()
+}
 
 export function VaultPage() {
-  const { secrets, audit, addSecret, revealSecret, deleteSecret, notify } = useStore()
-  const [revealed, setRevealed] = useState<Record<string, string>>({})
-  const [addOpen, setAddOpen] = useState(false)
-  const [confirmId, setConfirmId] = useState<string | null>(null)
-  const [key, setKey] = useState('')
+  const { keys, keyAudit, providers, saveKey, deleteKey, refreshKeys, notify } = useStore()
+  const [open, setOpen] = useState(false)
+  const [preset, setPreset] = useState(providerCatalog[0])
+  const [name, setName] = useState(providerCatalog[0].keyName)
   const [value, setValue] = useState('')
-  const [scopes, setScopes] = useState<string[]>(['Forge'])
-  const [visibility, setVisibility] = useState<'masked' | 'restricted'>('masked')
+  const [custom, setCustom] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [confirmName, setConfirmName] = useState<string | null>(null)
+  const [custody, setCustody] = useState<string | null>(null)
 
-  const toggleReveal = (secret: Secret) => {
-    if (secret.visibility === 'restricted') {
-      notify('Restricted secret · replace only, never revealed')
-      return
-    }
-    if (revealed[secret.id]) {
-      setRevealed((prev) => {
-        const next = { ...prev }
-        delete next[secret.id]
-        return next
-      })
-      return
-    }
-    const plaintext = revealSecret(secret.id)
-    if (plaintext) setRevealed((prev) => ({ ...prev, [secret.id]: plaintext }))
-  }
+  useEffect(() => {
+    void api
+      .health()
+      .then((health) => setCustody(health.keyCustody))
+      .catch(() => setCustody(null))
+  }, [])
 
-  const copySecret = async (secret: Secret) => {
-    if (secret.visibility === 'restricted') {
-      notify('Restricted secret · copy denied')
-      return
-    }
-    const plaintext = revealSecret(secret.id)
-    if (!plaintext) return
-    try {
-      await navigator.clipboard.writeText(plaintext)
-      notify(`${secret.key} copied · audit entry added`)
-    } catch {
-      notify('Clipboard blocked in this browser')
-    }
-  }
-
-  const create = () => {
-    if (!key.trim() || !value.trim() || !scopes.length) return
-    addSecret({
-      key: key.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_'),
-      value: value.trim(),
-      scope: scopes,
-      visibility,
-    })
-    setAddOpen(false)
-    setKey('')
+  const start = (keyName?: string) => {
+    const known = providerCatalog.find((provider) => provider.keyName === keyName) ?? providerCatalog[0]
+    setPreset(known)
+    setCustom(Boolean(keyName && !providerCatalog.some((provider) => provider.keyName === keyName)))
+    setName(keyName ?? known.keyName)
     setValue('')
-    setScopes(['Forge'])
-    setVisibility('masked')
-    notify('Secret added · encrypted at rest, audit entry written')
+    setError(null)
+    setOpen(true)
   }
+
+  const submit = async () => {
+    if (!value.trim()) {
+      setError('Paste the key value.')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      await saveKey(name, value, custom ? undefined : preset.id)
+      notify(`${name} encrypted and stored`)
+      setOpen(false)
+      setValue('')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not store that key.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const userKeys = keys.filter((key) => key.source === 'user')
+  const workerKeys = keys.filter((key) => key.source === 'worker')
 
   return (
     <div className="page page-vault">
@@ -79,35 +80,43 @@ export function VaultPage() {
         <div>
           <h1>Vault</h1>
           <p>
-            Provider keys for the workspace. The Worker injects them; the browser only ever sees a mask
-            unless you reveal one, and every reveal is logged.
+            Your provider keys. Values are write-only once stored: the Worker decrypts a key only for
+            the upstream call that needs it, and this page never receives it back.
           </p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={() => setAddOpen(true)}>
-          <Plus size={13} /> Add secret
-        </button>
+        <div className="head-actions">
+          <button type="button" className="btn" onClick={() => void refreshKeys()} title="Reload key metadata">
+            <RefreshCw size={13} /> Refresh
+          </button>
+          <button type="button" className="btn btn-primary" onClick={() => start()}>
+            <Plus size={13} /> Add key
+          </button>
+        </div>
       </header>
 
       <div className="vault-summary">
         <div className="vault-card">
           <KeyRound size={15} />
           <div>
-            <strong>{secrets.length} keys</strong>
-            <span>{secrets.filter((secret) => secret.visibility === 'restricted').length} restricted · envelope encrypted</span>
+            <strong>{userKeys.length} of your keys</strong>
+            <span>{workerKeys.length} worker secrets · AES-GCM at rest</span>
           </div>
         </div>
         <div className="vault-card">
           <ShieldCheck size={15} />
           <div>
-            <strong>AES-256-GCM</strong>
-            <span>per-workspace KEK · crypto-shred on revoke</span>
+            <strong>{keys.length} configured</strong>
+            <span>
+              {providers.filter((provider) => provider.status === 'connected').length} of{' '}
+              {providers.length} providers ready
+            </span>
           </div>
         </div>
         <div className="vault-card">
-          <Eye size={15} />
+          <Fingerprint size={15} />
           <div>
-            <strong>{audit.length} events</strong>
-            <span>injections, reveals, denials</span>
+            <strong>{keyAudit.length} audit events</strong>
+            <span>created, replaced, deleted</span>
           </div>
         </div>
       </div>
@@ -115,94 +124,125 @@ export function VaultPage() {
       <div className="vault-layout">
         <section className="panel">
           <header className="panel-head">
-            <h2>Secrets</h2>
-            <span className="tiny faint">values never leave the Worker unless revealed</span>
+            <h2>Keys</h2>
+            <span className="tiny faint">
+              {custody === 'worker-secret'
+                ? 'sealed with SOSYSTEM_SECRET'
+                : custody === 'd1-fallback'
+                  ? 'sealed with a generated deployment key'
+                  : 'sealed in the Worker'}
+            </span>
           </header>
           <div className="secret-list">
-            {secrets.map((secret) => (
-              <div key={secret.id} className="secret-row">
+            {keys.map((key) => (
+              <div key={key.id} className="secret-row">
                 <div className="secret-main">
                   <div className="secret-key mono">
-                    {secret.key}
-                    <Chip tone={secret.visibility === 'restricted' ? 'violet' : 'neutral'}>
-                      {secret.visibility}
+                    {key.name}
+                    <Chip tone={key.source === 'user' ? 'lime' : 'violet'}>
+                      {key.source === 'user' ? 'yours' : 'worker'}
                     </Chip>
                   </div>
-                  <div className="secret-value mono">
-                    {revealed[secret.id] ?? '••••••••••••••••••••••••'}
-                  </div>
+                  <div className="secret-value mono">{key.masked}</div>
                   <div className="secret-meta">
-                    <span className="tiny faint">scope: {secret.scope.join(', ')}</span>
-                    <span className="tiny faint">updated {secret.updated}</span>
-                    {secret.lastUsed ? <span className="tiny faint">used {secret.lastUsed}</span> : null}
+                    <span className="tiny faint">
+                      {providerCatalog.find((provider) => provider.id === key.provider)?.name ?? key.provider}
+                    </span>
+                    <span className="tiny faint">
+                      updated {key.source === 'user' ? timeAgo(key.updatedAt) : 'from the environment'}
+                    </span>
+                    <span className="tiny faint">
+                      {key.lastUsedAt ? `used ${timeAgo(key.lastUsedAt)}` : 'not used yet'}
+                    </span>
                   </div>
                 </div>
                 <div className="secret-actions">
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={() => toggleReveal(secret)}
-                    aria-label={secret.visibility === 'restricted' ? 'Restricted secret' : revealed[secret.id] ? 'Hide value' : 'Reveal value'}
-                  >
-                    {secret.visibility === 'restricted' ? <Lock size={14} /> : revealed[secret.id] ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                  <button type="button" className="icon-btn" onClick={() => void copySecret(secret)} aria-label="Copy secret">
-                    <Copy size={14} />
-                  </button>
-                  {confirmId === secret.id ? (
-                    <span className="confirm-inline">
-                      sure?
-                      <button
-                        type="button"
-                        className="danger-link"
-                        onClick={() => {
-                          deleteSecret(secret.id)
-                          setConfirmId(null)
-                          notify(`${secret.key} deleted · crypto-shred queued`)
-                        }}
-                      >
-                        delete
+                  {key.source === 'user' ? (
+                    <>
+                      <button type="button" className="link-btn" onClick={() => start(key.name)}>
+                        Replace
                       </button>
-                      <button type="button" className="link-btn" onClick={() => setConfirmId(null)}>
-                        cancel
-                      </button>
-                    </span>
+                      {confirmName === key.name ? (
+                        <span className="confirm-inline">
+                          sure?
+                          <button
+                            type="button"
+                            className="danger-link"
+                            onClick={() => {
+                              void deleteKey(key.name)
+                                .then(() => notify(`${key.name} deleted`))
+                                .catch((caught: unknown) =>
+                                  notify(caught instanceof Error ? caught.message : 'Delete failed'),
+                                )
+                              setConfirmName(null)
+                            }}
+                          >
+                            delete
+                          </button>
+                          <button type="button" className="link-btn" onClick={() => setConfirmName(null)}>
+                            cancel
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="icon-btn danger"
+                          onClick={() => setConfirmName(key.name)}
+                          aria-label={`Delete ${key.name}`}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </>
                   ) : (
-                    <button type="button" className="icon-btn danger" onClick={() => setConfirmId(secret.id)} aria-label="Delete secret">
-                      <Trash2 size={14} />
-                    </button>
+                    <span className="tiny faint">set as a Worker secret</span>
                   )}
                 </div>
               </div>
             ))}
-            {!secrets.length ? <Empty title="No secrets yet">Add a provider key to give an agent a tool.</Empty> : null}
+            {!keys.length ? (
+              <Empty
+                icon={<KeyRound size={18} />}
+                title="No keys yet"
+                action={
+                  <button type="button" className="btn btn-primary" onClick={() => start()}>
+                    <Plus size={13} /> Add your first key
+                  </button>
+                }
+              >
+                Add a TypeSafe key for Jev and a System 2 key (Anthropic, OpenAI, Google or OpenRouter).
+              </Empty>
+            ) : null}
           </div>
           <footer className="panel-foot">
-            <span className="tiny faint">Restricted keys can be replaced or revoked, never read back.</span>
+            <span className="tiny faint">
+              Replacing a key overwrites the ciphertext in place. Deleting it removes the row.
+            </span>
           </footer>
         </section>
 
         <section className="panel">
           <header className="panel-head">
             <h2>Audit log</h2>
-            <span className="tiny faint">append-only</span>
+            <span className="tiny faint">newest first</span>
           </header>
           <div className="audit-list">
-            {audit.map((event) => (
+            {keyAudit.map((event) => (
               <div key={event.id} className="audit-row">
-                <span className={`audit-dot ${event.outcome === 'denied' ? 'denied' : 'ok'}`} />
+                <span className={cn('audit-dot', event.outcome === 'denied' ? 'denied' : 'ok')} />
                 <div className="audit-copy">
                   <span className="audit-line">
                     <strong>{event.action}</strong> {event.key}
                   </span>
-                  <span className="tiny faint">{event.actor} · {event.at}</span>
+                  <span className="tiny faint">{timeAgo(event.at)}</span>
                 </div>
                 <Chip tone={event.outcome === 'denied' ? 'red' : 'neutral'}>{event.outcome}</Chip>
               </div>
             ))}
+            {!keyAudit.length ? <p className="tiny faint">Every create, replace and delete lands here.</p> : null}
           </div>
           <footer className="panel-foot">
-            <span className="tiny faint">Every injection and reveal is recorded with actor and time.</span>
+            <span className="tiny faint">Written server-side at the moment the key changes.</span>
           </footer>
         </section>
       </div>
@@ -210,94 +250,85 @@ export function VaultPage() {
       <div className="vault-note">
         <Lock size={13} />
         <div>
-          <strong>Custody model</strong>
+          <strong>Custody</strong>
           <p>
-            Keys are encrypted with a per-workspace key, unwrapped inside the Worker, and scoped to the
-            agents you tick. A denied tool call never receives a value. This pass keeps the vault in
-            memory: closing the tab clears everything.
+            Keys are sealed with AES-GCM before they are written to D1. When a turn runs, the Worker
+            decrypts the one key it needs for that request and keeps it in memory only. There is no
+            reveal endpoint and no copy-to-clipboard path, so a stolen browser session cannot read a
+            stored key.
           </p>
         </div>
       </div>
 
       <Modal
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-        title="Add a secret"
-        subtitle="Stored in this session only. The value is never returned to the client again."
+        open={open}
+        onClose={() => setOpen(false)}
+        title={keys.some((key) => key.name === name) ? 'Replace key' : 'Add a key'}
+        subtitle="The value is encrypted before it leaves the request handler."
         footer={
           <>
-            <button type="button" className="btn btn-quiet" onClick={() => setAddOpen(false)}>
+            <button type="button" className="btn btn-quiet" onClick={() => setOpen(false)}>
               Cancel
             </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!key.trim() || !value.trim() || !scopes.length}
-              onClick={create}
-            >
-              Add to vault
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void submit()}>
+              {busy ? 'Encrypting…' : 'Store key'}
             </button>
           </>
         }
       >
-        <Field label="Key" hint="Upper snake case, e.g. GEMINI_API_KEY" htmlFor="secret-key">
+        {!custom ? (
+          <Field label="Provider">
+            <select
+              className="input"
+              value={preset.id}
+              onChange={(event) => {
+                const next = providerCatalog.find((provider) => provider.id === event.target.value)
+                if (!next) return
+                setPreset(next)
+                setName(next.keyName)
+                setError(null)
+              }}
+            >
+              {providerCatalog.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.name} · {provider.keyName}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
+
+        <Field label="Key name" hint="Upper snake case. Unknown names are stored as custom keys." htmlFor="key-name">
           <input
-            id="secret-key"
+            id="key-name"
             className="input mono"
-            value={key}
-            onChange={(event) => setKey(event.target.value)}
-            placeholder="PROVIDER_API_KEY"
+            value={name}
+            onChange={(event) => {
+              setName(event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))
+              setCustom(true)
+            }}
           />
         </Field>
-        <Field label="Value" htmlFor="secret-value">
+
+        <Field label="Value" hint="Paste once. It cannot be read back." htmlFor="key-value">
           <input
-            id="secret-value"
+            id="key-value"
             className="input mono"
             type="password"
             value={value}
             onChange={(event) => setValue(event.target.value)}
             autoComplete="off"
+            placeholder="sk-…"
           />
         </Field>
-        <Field label="Visible to">
-          <div className="check-grid">
-            {agentScopes.map((agent) => (
-              <CheckRow
-                key={agent}
-                label={agent}
-                checked={scopes.includes(agent)}
-                onChange={(next) =>
-                  setScopes((prev) => (next ? [...prev, agent] : prev.filter((item) => item !== agent)))
-                }
-              />
-            ))}
-          </div>
-        </Field>
-        <Field label="Visibility">
-          <div className="radio-row">
-            <button
-              type="button"
-              className={`radio-card ${visibility === 'masked' ? 'is-on' : ''}`}
-              onClick={() => setVisibility('masked')}
-            >
-              <strong>Masked</strong>
-              <span>Reveal and copy on demand, logged.</span>
-            </button>
-            <button
-              type="button"
-              className={`radio-card ${visibility === 'restricted' ? 'is-on' : ''}`}
-              onClick={() => setVisibility('restricted')}
-            >
-              <strong>Restricted</strong>
-              <span>Replace only. Never readable by a human or agent.</span>
-            </button>
-          </div>
-        </Field>
+
+        {error ? <p className="field-error">{error}</p> : null}
+
+        <p className="tiny faint">
+          <ShieldCheck size={10} /> Anthropic, OpenAI, Google and OpenRouter keys are used by System 2.
+          TypeSafe is used by Jev.
+        </p>
       </Modal>
     </div>
   )
-}
-
-export function actionTone(event: AuditEvent) {
-  return event.outcome === 'denied' ? 'red' : 'neutral'
 }
