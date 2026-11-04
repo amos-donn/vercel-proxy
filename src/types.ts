@@ -1,0 +1,356 @@
+/** Shared domain model for the sosystem workspace. */
+
+export type Tone = 'lime' | 'blue' | 'violet' | 'amber' | 'red' | 'neutral'
+export type ViewName =
+  | 'home'
+  | 'chats'
+  | 'files'
+  | 'vault'
+  | 'jobs'
+  | 'media'
+  | 'automations'
+  | 'integrations'
+  | 'agents'
+  | 'settings'
+
+export type View = { name: ViewName } | { name: 'chat'; id: string }
+
+export type RuntimeMode = 'simulated' | 'live'
+export type ApprovalPosture = 'auto' | 'risky' | 'ask'
+export type ChatStatus = 'idle' | 'running' | 'waiting'
+
+export interface PlanStep {
+  id: string
+  label: string
+  status: 'done' | 'active' | 'pending' | 'blocked'
+}
+
+export interface DiffLine {
+  t: 'add' | 'del' | 'ctx'
+  text: string
+}
+
+export interface FileDiff {
+  file: string
+  additions: number
+  deletions: number
+  lines: DiffLine[]
+}
+
+/* ------------------------------------------------------------------ *
+   Jev — typed decision primitives
+ * ------------------------------------------------------------------ */
+
+export type Question =
+  | {
+      id: string
+      kind: 'choice'
+      prompt: string
+      options: Array<{ id: string; description?: string }>
+    }
+  | { id: string; kind: 'score'; prompt: string; levels: string[] }
+  | { id: string; kind: 'noul'; statement: string }
+
+export interface Answer {
+  id: string
+  choice?: string
+  probabilities?: Record<string, number>
+  confidence?: number
+  score?: number
+  value?: number
+  noul?: number
+  version?: string
+}
+
+export interface JevRequest {
+  model: string
+  state: Record<string, unknown>
+  questions: Question[]
+}
+
+export interface Escalation {
+  reason: string
+  threshold: number
+  signal: number
+  s2: {
+    model: string
+    latencyMs: number
+    costUsd: number
+    plan: string[]
+  }
+}
+
+export interface DecisionTrace {
+  id: string
+  route: 's1' | 's2'
+  s1: {
+    model: string
+    version: string
+    latencyMs: number
+    costUsd: number
+    promptTokens: number
+    questions: number
+    decision: string
+    confidence: number
+    probabilities: Record<string, number>
+    validation: 'ok' | 'repaired' | 'failed'
+    template?: string
+  }
+  escalation?: Escalation
+  baselineUsd: number
+  savedUsd: number
+}
+
+/* ------------------------------------------------------------------ *
+   Chats
+ * ------------------------------------------------------------------ */
+
+export type ChatMessage =
+  | { id: string; kind: 'user'; text: string; at: string }
+  | {
+      id: string
+      kind: 'assistant'
+      text: string
+      at: string
+      system: 's1' | 's2'
+      streaming?: boolean
+      template?: boolean
+    }
+  | { id: string; kind: 'trace'; trace: DecisionTrace }
+  | { id: string; kind: 'plan'; steps: PlanStep[] }
+  | {
+      id: string
+      kind: 'tool'
+      name: string
+      title: string
+      input?: string
+      output?: string
+      status: 'running' | 'ok' | 'error'
+      ms?: number
+      diff?: FileDiff[]
+    }
+  | {
+      id: string
+      kind: 'approval'
+      title: string
+      detail: string
+      scope: string[]
+      risk: 'low' | 'medium' | 'high'
+      status: 'pending' | 'approved' | 'denied'
+      decision?: string
+      action?: 'write' | 'delete'
+      fileName?: string
+    }
+  | {
+      id: string
+      kind: 'artifact'
+      name: string
+      type: string
+      meta: string
+      target?: 'files' | 'media'
+      content?: string
+    }
+  | { id: string; kind: 'notice'; text: string }
+
+export interface Chat {
+  id: string
+  title: string
+  pinned: boolean
+  status: ChatStatus
+  agentId: string
+  preview: string
+  updated: string
+  createdAt: string
+  messages: ChatMessage[]
+  plan?: PlanStep[]
+  tags?: string[]
+}
+
+/* ------------------------------------------------------------------ *
+   Files, vault
+ * ------------------------------------------------------------------ */
+
+export interface WorkspaceFile {
+  path: string
+  text?: string
+  bytes: number
+  updated: string
+  origin: 'agent' | 'user'
+}
+
+export interface Secret {
+  id: string
+  key: string
+  value: string
+  scope: string[]
+  visibility: 'masked' | 'restricted'
+  updated: string
+  lastUsed?: string
+}
+
+export interface AuditEvent {
+  id: string
+  action: 'created' | 'revealed' | 'replaced' | 'deleted' | 'injected' | 'denied'
+  key: string
+  actor: string
+  at: string
+  outcome: 'ok' | 'denied'
+}
+
+/* ------------------------------------------------------------------ *
+   Jobs & quota
+ * ------------------------------------------------------------------ */
+
+export type JobState =
+  | 'queued'
+  | 'running'
+  | 'paused_rate'
+  | 'paused_quota'
+  | 'awaiting_approval'
+  | 'succeeded'
+  | 'failed'
+  | 'dead_letter'
+
+export interface JobAttempt {
+  n: number
+  at: string
+  status: 'ok' | 'rate_limited' | 'error' | 'timeout'
+  code?: string
+  retryAfterMs?: number
+  backoffMs?: number
+  jitterMs?: number
+  ms?: number
+}
+
+export interface Job {
+  id: string
+  title: string
+  provider: string
+  kind: 'transcribe' | 'sync' | 'crawl' | 'export'
+  state: JobState
+  attempt: number
+  maxAttempts: number
+  resumeAt?: number
+  reason?: string
+  costUsd: number
+  createdAt: string
+  detail: string
+  attempts: JobAttempt[]
+  mediaId?: string
+  chatId?: string
+  progress?: number
+}
+
+export interface Quota {
+  id: string
+  provider: string
+  metric: 'RPM' | 'TPM' | 'concurrency' | 'spend'
+  used: number
+  limit: number
+  resets: string
+}
+
+/* ------------------------------------------------------------------ *
+   Media & transcripts
+ * ------------------------------------------------------------------ */
+
+export interface TranscriptLine {
+  id: string
+  startMs: number
+  endMs: number
+  text: string
+  speaker?: string
+}
+
+export interface MediaItem {
+  id: string
+  name: string
+  kind: 'video' | 'audio'
+  durationSec: number
+  sizeMb: number
+  status: 'ready' | 'transcribing' | 'transcribed' | 'failed'
+  transcript: TranscriptLine[]
+  summary?: string
+  expiresAt?: number
+  tone: Tone
+  src?: string
+  uploadedAt: string
+}
+
+/* ------------------------------------------------------------------ *
+   Automations, integrations, agents, providers
+ * ------------------------------------------------------------------ */
+
+export interface Automation {
+  id: string
+  name: string
+  prompt: string
+  everyMinutes: number
+  nextAt: number
+  runs: number
+  enabled: boolean
+  lastRun?: string
+}
+
+export interface Integration {
+  id: string
+  name: string
+  category: string
+  blurb: string
+  transport: 'streamable-http' | 'sse' | 'stdio'
+  status: 'connected' | 'needs_auth' | 'degraded' | 'available'
+  scopes: string[]
+  tools: number
+  agents: number
+  verified?: boolean
+}
+
+export interface Agent {
+  id: string
+  name: string
+  role: string
+  blurb: string
+  tone: Tone
+  model: string
+  effort: 'low' | 'medium' | 'high'
+  posture: ApprovalPosture
+  tools: string[]
+  questions: number
+  runs: number
+  success: number
+}
+
+export interface Provider {
+  id: string
+  name: string
+  mark: string
+  status: 'connected' | 'missing'
+  keyMask?: string
+  models: number
+  note: string
+  tone: Tone
+}
+
+export interface Lane {
+  id: string
+  label: string
+  purpose: string
+  model: string
+}
+
+export interface Thresholds {
+  accept: number
+  escalate: number
+  risky: number
+}
+
+export interface Settings {
+  runtime: RuntimeMode
+  jevModel: string
+  s2Model: string
+  effort: 'low' | 'medium' | 'high'
+  thresholds: Thresholds
+  posture: ApprovalPosture
+  compact: boolean
+  reducedMotion: boolean
+}
