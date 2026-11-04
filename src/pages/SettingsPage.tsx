@@ -354,7 +354,7 @@ export function SettingsPage({ onNavigate }: { onNavigate: (view: View) => void 
       </div>
 
       <footer className="settings-foot">
-        <span className="mono">Mezze v0.4.0</span>
+        <span className="mono">Mezze v0.4.1</span>
         <span>Built for Cloudflare Workers · React 19 · Jev {settings.jevModel}</span>
         <span className="grow" />
         <span>D1 workspace · encrypted BYOK · MCP</span>

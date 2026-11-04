@@ -188,7 +188,7 @@ Everything below is implemented. Accounts, D1 persistence, encrypted keys, MCP a
 ## 14. Security and trust posture
 
 - Every API route except health and auth requires a session; ownership is taken from the session, never from the request body.
-- Session IDs are hashed at rest, cookies are HttpOnly and SameSite=Lax, passwords use PBKDF2-SHA256 with a per-user salt.
+- Session IDs are hashed at rest, cookies are HttpOnly and SameSite=Lax, passwords use PBKDF2-SHA256 with a per-user salt at the Workers maximum of 100,000 iterations.
 - Writes require a matching `Origin`; cross-origin mutations return 403.
 - Provider keys and MCP tokens are sealed with AES-GCM before they reach D1 and are decrypted only inside the Worker for one upstream call.
 - Key values are write-only: there is no reveal or copy endpoint, and the inventory returns masks only.

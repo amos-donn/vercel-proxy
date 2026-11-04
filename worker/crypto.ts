@@ -2,7 +2,13 @@ import type { D1Database, Env } from './db'
 import { one, run } from './db'
 
 const encoder = new TextEncoder()
-const PASSWORD_ITERATIONS = 120_000
+/**
+ * Cloudflare Workers rejects PBKDF2 iteration counts above 100,000, so 100k is
+ * the strongest setting the platform allows. Existing hashes embed their own
+ * count and are verified against it when the runtime permits.
+ */
+const PASSWORD_ITERATIONS = 100_000
+const MAX_PBKDF2_ITERATIONS = 100_000
 const KEY_CACHE = new WeakMap<object, Promise<{ key: CryptoKey; custody: 'worker-secret' | 'd1-fallback' }>>()
 
 export type Bytes = Uint8Array<ArrayBuffer>
@@ -59,7 +65,17 @@ export async function verifyPassword(password: string, stored: string): Promise<
   if (algorithm !== 'pbkdf2' || !iterationsValue || !saltValue || !hashValue) return false
   const iterations = Number(iterationsValue)
   if (!Number.isFinite(iterations) || iterations < 10_000) return false
-  const bits = await derivePassword(password, base64ToBytes(saltValue), iterations)
+  const salt = base64ToBytes(saltValue)
+  if (iterations > MAX_PBKDF2_ITERATIONS) {
+    // Hashes above the Workers ceiling only verify on runtimes without the cap.
+    try {
+      const legacy = await derivePassword(password, salt, iterations)
+      return safeEqual(legacy, base64ToBytes(hashValue))
+    } catch {
+      return false
+    }
+  }
+  const bits = await derivePassword(password, salt, iterations)
   return safeEqual(bits, base64ToBytes(hashValue))
 }
 

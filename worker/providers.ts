@@ -244,7 +244,7 @@ export async function health(env: Env, userId?: string): Promise<Record<string, 
   return {
     ok: true,
     service: 'mezze',
-    version: '0.4.0',
+    version: '0.4.1',
     authenticated: Boolean(userId),
     jev: configured('typesafe'),
     system2: providers.some((provider) => provider.kind === 'system2' && configured(provider.id)),
