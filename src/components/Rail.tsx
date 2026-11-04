@@ -36,10 +36,10 @@ export function Rail({ view, onNavigate }: { view: View; onNavigate: (view: View
         aria-label="sosystem home"
       >
         <svg viewBox="0 0 32 32" width="21" height="21" aria-hidden="true">
-          <g stroke="#c9f45a" strokeWidth="2" strokeLinecap="round">
+          <g stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M16 8v6M16 18v6M9.5 11.5l4.5 3M22.5 11.5l-4.5 3M9.5 20.5l4.5-3M22.5 20.5l-4.5-3" />
           </g>
-          <circle cx="16" cy="16" r="2.4" fill="#c9f45a" />
+          <circle cx="16" cy="16" r="2.4" fill="currentColor" />
         </svg>
       </button>
 
