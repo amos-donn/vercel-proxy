@@ -164,6 +164,9 @@ export function Composer({
   }
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // IME composition (Japanese, Chinese, Korean) commits with Enter; sending
+    // here would submit a half-finished word.
+    if (event.nativeEvent.isComposing || event.key === 'Process') return
     if (slash.open) {
       if (event.key === 'ArrowDown') {
         event.preventDefault()

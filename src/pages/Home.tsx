@@ -56,7 +56,7 @@ export function Home({ onNavigate }: { onNavigate: (view: View) => void }) {
     (job) => job.state === 'running' || job.state === 'paused_rate' || job.state === 'awaiting_approval',
   )
   const latestFile = useMemo(
-    () => [...files].sort((a, b) => (a.updated === 'just now' ? -1 : 1))[0],
+    () => [...files].sort((a, b) => (b.updated === 'just now' ? 1 : 0) - (a.updated === 'just now' ? 1 : 0))[0],
     [files],
   )
   const connectedServers = mcpServers.filter((server) => server.enabled)

@@ -613,6 +613,7 @@ export async function system2Stream(
     async start(controller) {
       const decoder = new TextDecoder()
       let buffer = ''
+      let providerError = ''
       try {
         for (;;) {
           const { done, value } = await reader.read()
@@ -627,11 +628,24 @@ export async function system2Stream(
             } catch {
               continue
             }
+            // Providers report quota and model errors inside the stream. Surface
+            // them now instead of finishing with no text and retrying unstreamed.
+            if (parsed.error) {
+              const error = parsed.error
+              providerError =
+                typeof error === 'string'
+                  ? error
+                  : typeof (error as { message?: unknown }).message === 'string'
+                    ? String((error as { message: string }).message)
+                    : 'The provider reported an error mid-stream.'
+              break
+            }
             const delta = streamDelta(prepared.provider, parsed)
             if (delta) controller.enqueue(send({ type: 'delta', text: delta }))
           }
+          if (providerError) break
         }
-        controller.enqueue(send({ type: 'done' }))
+        controller.enqueue(send(providerError ? { type: 'error', message: providerError } : { type: 'done' }))
       } catch (error) {
         const message = error instanceof Error ? error.message : 'The model stream failed.'
         controller.enqueue(send({ type: 'error', message }))

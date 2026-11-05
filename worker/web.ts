@@ -119,7 +119,7 @@ export async function readPage(rawUrl: string): Promise<{ url: string; title: st
   }
 
   const type = response.headers.get('content-type') ?? ''
-  const raw = (await response.text()).slice(0, MAX_RAW)
+  const raw = await readCapped(response, MAX_RAW)
   const isHtml = /html|xml/i.test(type) || /<html[\s>]/i.test(raw.slice(0, 2_000))
   const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(raw)
   const title = titleMatch ? decodeEntities(titleMatch[1]).replace(/\s+/g, ' ').trim().slice(0, 200) : response.url
@@ -130,6 +130,31 @@ export async function readPage(rawUrl: string): Promise<{ url: string; title: st
     title: title || response.url,
     text: text.slice(0, MAX_TEXT),
   }
+}
+
+/** Stop reading at the cap: a huge page must not fill the Worker's memory. */
+async function readCapped(response: Response, max: number): Promise<string> {
+  const reader = response.body?.getReader()
+  if (!reader) return ''
+  const decoder = new TextDecoder()
+  let text = ''
+  let bytes = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      bytes += value.byteLength
+      text += decoder.decode(value, { stream: true })
+      if (bytes >= max) {
+        await reader.cancel().catch(() => undefined)
+        break
+      }
+    }
+    text += decoder.decode()
+  } catch {
+    // A truncated body still gives the model what arrived before the failure.
+  }
+  return text.slice(0, max)
 }
 
 function htmlToText(html: string): string {
@@ -183,26 +208,49 @@ function safeChar(code: number): string {
 }
 
 /** Block loopback, link-local and RFC1918 targets so the Worker cannot probe internals. */
-function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+export function isPrivateHost(hostname: string): boolean {
+  let host = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '')
   if (!host) return true
+
+  // IPv4-mapped IPv6 (`::ffff:127.0.0.1`, `::ffff:7f00:1`) reaches IPv4.
+  const mapped = /^(?:::ffff:|::)(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host)
+  if (mapped) host = mapped[1]
+  if (host.includes(':')) {
+    if (host === '::' || host === '::1') return true
+    if (host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('ff')) {
+      return true
+    }
+    const hexMapped = /^(?:::ffff:|(?:0{1,4}:){5}ffff:)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host)
+    if (!hexMapped) return false
+    const high = parseInt(hexMapped[1], 16)
+    const low = parseInt(hexMapped[2], 16)
+    host = `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`
+  }
+
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.internal') || host.endsWith('.local')) {
     return true
   }
-  if (host === '::1' || host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) return true
   if (host === 'metadata.google.internal') return true
 
-  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
-  if (!ipv4) return false
-  const a = Number(ipv4[1])
-  const b = Number(ipv4[2])
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    a >= 224
-  )
+  // Numeric, hex and shortened IPv4 forms (`2130706433`, `0x7f.0.0.1`, `127.1`)
+  // all resolve to a real address, so treat any all-numeric host as an IP.
+  const parts = host.split('.')
+  if (parts.every((part) => /^\d+$/.test(part) || /^0x[0-9a-f]+$/i.test(part))) {
+    if (parts.length !== 4) return true
+    const nums = parts.map((part) =>
+      /^0x/i.test(part) ? parseInt(part, 16) : part.length > 1 && part.startsWith('0') ? parseInt(part, 8) : Number(part),
+    )
+    if (nums.some((n) => !Number.isFinite(n) || n < 0 || n > 255)) return true
+    const [a, b] = nums
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      a >= 224
+    )
+  }
+  return false
 }

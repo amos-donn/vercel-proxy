@@ -53,6 +53,14 @@ function normalizePassword(value: unknown): string {
   return value
 }
 
+function decodeCookie(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 function parseCookies(request: Request): Record<string, string> {
   const header = request.headers.get('cookie') ?? ''
   return Object.fromEntries(
@@ -62,7 +70,8 @@ function parseCookies(request: Request): Record<string, string> {
       .filter(Boolean)
       .map((part) => {
         const index = part.indexOf('=')
-        return index === -1 ? [part, ''] : [part.slice(0, index), decodeURIComponent(part.slice(index + 1))]
+        // A malformed cookie (`%`, cut escape) must not 500 every API call.
+        return index === -1 ? [part, ''] : [part.slice(0, index), decodeCookie(part.slice(index + 1))]
       }),
   )
 }
