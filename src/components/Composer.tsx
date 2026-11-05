@@ -298,7 +298,7 @@ export function Composer({
         className="composer-input"
         placeholder={placeholder}
         value={value}
-        rows={variant === 'hero' ? 3 : 2}
+        rows={2}
         autoFocus={autoFocus}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={onKeyDown}

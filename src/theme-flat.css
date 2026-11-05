@@ -9,13 +9,13 @@
 :root {
   --bg: #09090b;
   --bg-deep: #09090b;
-  --surface-1: #0c0c0e;
-  --surface-2: #111113;
-  --surface-3: #18181b;
-  --surface-4: #1f1f23;
-  --border: #27272a;
-  --border-soft: #1f1f23;
-  --border-strong: #3f3f46;
+  --surface-1: #0d0d0f;
+  --surface-2: #131316;
+  --surface-3: #1a1a1e;
+  --surface-4: #232328;
+  --border: #35353d;
+  --border-soft: #2a2a31;
+  --border-strong: #4a4a52;
   --border-hover: #52525b;
   --text: #fafafa;
   --text-secondary: #a1a1aa;
@@ -99,8 +99,6 @@ body *::after {
 .auto-stats > div,
 .vault-note,
 .continue-card,
-.home-hero,
-.working,
 .modal,
 .palette,
 .job-card,
@@ -124,6 +122,15 @@ body *::after {
 [class^='auth-'],
 [class*=' auth-'] {
   background-color: var(--surface-2) !important;
+}
+
+/* Cards that only had a gradient fill need a real surface and a visible edge. */
+.home-card,
+.panel,
+.trace,
+.trace-card {
+  background-color: var(--surface-1) !important;
+  border-color: var(--border) !important;
 }
 
 /* Controls: flat fills, single border. */
@@ -217,13 +224,27 @@ body *::after {
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55) !important;
 }
 
-/* Focus is a border, not a glow. */
+/* Focus is a border, not a glow. The composer is always focused on home, so it
+   gets the neutral edge instead of a full-width lime rectangle. */
 .input:focus,
 .textarea:focus,
-.mini-select:focus,
+.mini-select:focus {
+  border-color: var(--accent) !important;
+}
 .composer:focus-within,
 .search-box:focus-within {
-  border-color: var(--accent) !important;
+  border-color: var(--border-strong) !important;
+}
+.composer,
+.composer-hero {
+  border-radius: 10px !important;
+}
+
+.home-inner {
+  padding: 34px 28px 30px;
+}
+.home-grid {
+  margin-top: 20px;
 }
 
 /* Uppercase micro-labels were part of the tactile look; normalise the loudest. */
