@@ -1,0 +1,276 @@
+/*
+ * Flat theme overlay — imported after styles.css.
+ *
+ * The original chrome leaned on gradients, inset highlights, glow shadows and
+ * hover lift. This layer keeps the layout and the lime accent but reduces every
+ * surface to one border, one flat fill and one text colour, closer to shadcn/ui.
+ */
+
+:root {
+  --bg: #09090b;
+  --bg-deep: #09090b;
+  --surface-1: #0c0c0e;
+  --surface-2: #111113;
+  --surface-3: #18181b;
+  --surface-4: #1f1f23;
+  --border: #27272a;
+  --border-soft: #1f1f23;
+  --border-strong: #3f3f46;
+  --border-hover: #52525b;
+  --text: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #8f8f98;
+  --text-faint: #6b6b74;
+  --accent: #a3e635;
+  --accent-bright: #bef264;
+  --accent-strong: #84cc16;
+  --accent-soft: rgba(163, 230, 53, 0.1);
+  --accent-faint: rgba(163, 230, 53, 0.05);
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --blue: #60a5fa;
+  --violet: #c084fc;
+  --radius-xs: 3px;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --shadow-xs: none;
+  --shadow-sm: none;
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+  --highlight: none;
+}
+
+/* One stroke, no relief: drop every decorative background layer and shadow. */
+body,
+body * {
+  background-image: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+/* Pseudo-element overlays can still paint a gradient; flatten those too. */
+body *::before,
+body *::after {
+  background-image: none !important;
+}
+
+/* Nothing lifts or presses on hover any more. */.btn:hover:not(:disabled),
+.btn:active:not(:disabled),
+.send-btn:hover:not(:disabled),
+.send-btn:active:not(:disabled),
+.new-chat:hover,
+.int-card:hover,
+.agent-card:hover,
+.continue-card:hover,
+.rail-logo:hover {
+  transform: none !important;
+  filter: none !important;
+}
+
+/* Solid surfaces instead of gradients. */
+.rail,
+.sidebar,
+.chat-side,
+.file-tree,
+.canvas-list,
+.canvas-work {
+  background-color: var(--surface-1) !important;
+}
+.plan-card,
+.steps-card,
+.tool,
+.approval,
+.artifact,
+.composer,
+.composer-hero,
+.segmented,
+.search-box,
+.runtime-badge,
+.trace,
+.trace-card,
+.int-card,
+.int-note,
+.agent-card,
+.auto-list,
+.auto-note,
+.auto-stats > div,
+.vault-note,
+.continue-card,
+.home-hero,
+.working,
+.modal,
+.palette,
+.job-card,
+.job-row {
+  background-color: var(--surface-2) !important;
+}
+.input,
+.textarea,
+.mini-select,
+.canvas-code,
+.tool-output,
+.tool-input,
+.step-detail pre,
+.palette-input-row,
+.composer textarea {
+  background-color: var(--bg) !important;
+}
+.composer-dock {
+  background-color: var(--bg) !important;
+}
+[class^='auth-'],
+[class*=' auth-'] {
+  background-color: var(--surface-2) !important;
+}
+
+/* Controls: flat fills, single border. */
+.btn {
+  background-color: var(--surface-3) !important;
+  border-color: var(--border) !important;
+}
+.btn:hover:not(:disabled) {
+  background-color: var(--surface-4) !important;
+  border-color: var(--border-strong) !important;
+}
+.btn-primary,
+.send-btn,
+.auth-submit {
+  background-color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #0a0a0a !important;
+}
+.btn-primary:hover:not(:disabled),
+.send-btn:hover:not(:disabled),
+.auth-submit:hover:not(:disabled) {
+  background-color: var(--accent-strong) !important;
+  border-color: var(--accent-strong) !important;
+}
+.btn-danger {
+  background-color: var(--danger) !important;
+  border-color: var(--danger) !important;
+  color: #0a0a0a !important;
+}
+.btn-ghost,
+.btn-quiet {
+  background-color: transparent !important;
+}
+.btn-quiet:hover:not(:disabled),
+.icon-btn:hover {
+  background-color: var(--surface-3) !important;
+}
+.rail-logo {
+  background-color: var(--accent) !important;
+  color: #0a0a0a !important;
+}
+.rail-logo svg {
+  color: #0a0a0a !important;
+}
+
+/* Selected rows and tabs: one flat step up the surface scale. */
+.rail-btn.is-active,
+.chat-row.is-active,
+.tool-link.is-active,
+.palette-item.is-selected,
+.tree-row.is-active,
+.transcript-line.is-active,
+.segmented-item.is-active,
+.auth-tab.is-active,
+.canvas-tab.is-active {
+  background-color: var(--surface-3) !important;
+  color: var(--text) !important;
+}
+.rail-btn.is-active {
+  color: var(--accent-bright) !important;
+}
+.segmented-item.is-active,
+.auth-tab.is-active {
+  border: 1px solid var(--border) !important;
+}
+.chat-row.is-active::before {
+  background-color: var(--accent) !important;
+}
+
+/* Chat bubbles: neutral, symmetric, bordered. */
+.msg-bubble {
+  background-color: var(--surface-3) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+  color: var(--text) !important;
+}
+
+/* Progress bars: solid accent. */
+.conf-track {
+  background-color: var(--surface-3) !important;
+}
+.conf-fill {
+  background-color: var(--accent) !important;
+}
+
+/* Dialogs keep one soft shadow so they still read as floating. */
+.modal,
+.palette,
+[role='dialog'] {
+  border: 1px solid var(--border) !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55) !important;
+}
+
+/* Focus is a border, not a glow. */
+.input:focus,
+.textarea:focus,
+.mini-select:focus,
+.composer:focus-within,
+.search-box:focus-within {
+  border-color: var(--accent) !important;
+}
+
+/* Uppercase micro-labels were part of the tactile look; normalise the loudest. */
+.plan-card header,
+.steps-card header,
+.side-section h3,
+.palette-hint {
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+/* ------------------------------------------------------------------ *
+   One sidebar — the far-left rail now carries the workspace, navigation,
+   the chat list and the account menu. There is no second column.
+ * ------------------------------------------------------------------ */
+
+.app {
+  grid-template-columns: 272px minmax(0, 1fr) !important;
+}
+
+.rail {
+  width: 100%;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  overflow: visible;
+  border-right: 1px solid var(--border-soft) !important;
+}
+
+.rail-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  width: 100%;
+  padding: 2px 8px 0;
+}
+
+.rail .tool-link {
+  width: 100%;
+  height: 29px;
+  justify-content: flex-start;
+  gap: 9px;
+  padding: 0 9px;
+  font-size: 11.5px;
+}
+
+.rail .profile {
+  margin-top: 3px;
+}

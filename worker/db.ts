@@ -34,6 +34,8 @@ export type Env = {
   SYSTEM2_API_KEY?: string
   SYSTEM2_BASE_URL?: string
   SYSTEM2_MODEL?: string
+  /** Exa web search key for the agent's web_search tool. */
+  EXA_API_KEY?: string
   [key: string]: unknown
 }
 

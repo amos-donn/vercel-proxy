@@ -29,6 +29,21 @@ export interface PlanStep {
   status: 'done' | 'active' | 'pending' | 'blocked'
 }
 
+/**
+ * One atomic step in a turn's execution pipeline. Labels always start with a
+ * verb ("Reading 4 workspace files", "Called claude-sonnet-4.5") so the run is
+ * readable without opening the details.
+ */
+export interface ActionStep {
+  id: string
+  label: string
+  status: 'running' | 'done' | 'error'
+  detail?: string
+  input?: string
+  output?: string
+  ms?: number
+}
+
 export interface DiffLine {
   t: 'add' | 'del' | 'ctx'
   text: string
@@ -121,9 +136,12 @@ export type ChatMessage =
       system: 's1' | 's2'
       streaming?: boolean
       template?: boolean
+      /** Private model reasoning, rendered dimmer than the answer. */
+      thinking?: boolean
     }
   | { id: string; kind: 'trace'; trace: DecisionTrace }
   | { id: string; kind: 'plan'; steps: PlanStep[] }
+  | { id: string; kind: 'steps'; steps: ActionStep[] }
   | {
       id: string
       kind: 'tool'
@@ -375,6 +393,15 @@ export interface WorkspaceSnapshot {
   settings: Settings
 }
 
+export type CanvasLanguage = 'html' | 'css' | 'js' | 'json' | 'svg' | 'md'
+
+/** One source file inside a multi-file canvas. */
+export interface CanvasFile {
+  path: string
+  language: CanvasLanguage
+  content: string
+}
+
 export interface Canvas {
   id: string
   name: string
@@ -382,6 +409,8 @@ export interface Canvas {
   html: string
   css: string
   js: string
+  /** Multi-file source. When absent, html/css/js are treated as index.html, styles.css and app.js. */
+  files?: CanvasFile[]
   origin: 'agent' | 'user'
   updatedAt: number
   chatId?: string
@@ -393,6 +422,7 @@ export interface CanvasDraft {
   html: string
   css: string
   js: string
+  files?: CanvasFile[]
 }
 
 export interface ScheduledSend {

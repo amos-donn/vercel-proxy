@@ -1,35 +1,50 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  CircleAlert,
   Code2,
   Download,
   FileUp,
   Frame,
   Loader2,
+  Maximize2,
   Play,
   Plus,
   Sparkles,
   Trash2,
 } from 'lucide-react'
 import { useStore } from '../store'
-import type { Canvas } from '../types'
+import type { CanvasFile } from '../types'
 import { cn } from '../lib/format'
 import { Field, Modal } from '../components/ui'
 import { simulateCanvas } from '../engine/canvas'
+import { buildCanvasDoc, canvasFiles, filesToParts, languageOf } from '../engine/canvasDoc'
 
-type Tab = 'preview' | 'html' | 'css' | 'js'
+type Tab = 'preview' | string
 
 interface Draft {
   name: string
-  html: string
-  css: string
-  js: string
+  files: CanvasFile[]
 }
 
 const blankDraft = (name: string): Draft => ({
   name: name || 'Untitled canvas',
-  html: `<main class="card">\n  <p class="kicker">new canvas</p>\n  <h1>${escapeHtml(name || 'Untitled canvas')}</h1>\n  <p class="lede">Edit the HTML, CSS or JS, then press Run.</p>\n  <button id="hello" class="btn">Say hello</button>\n  <output id="out"></output>\n</main>`,
-  css: `:root { color-scheme: dark; --accent: #b8f24d; --line: #262b20; --muted: #9aa392; }\n* { box-sizing: border-box; }\nbody { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; background: #0a0b09; color: #eef3e6; font-family: Inter, system-ui, sans-serif; }\n.card { width: min(520px, 100%); padding: 34px; border: 1px solid var(--line); border-radius: 18px; background: #12150f; }\n.kicker { margin: 0 0 10px; color: var(--accent); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; }\nh1 { margin: 0 0 12px; font-family: Georgia, serif; font-size: 34px; font-weight: 400; line-height: 1.05; }\n.lede { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 1.6; }\n.btn { padding: 9px 15px; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent); color: #0b1204; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }\noutput { display: block; margin-top: 14px; color: var(--muted); font-size: 12px; }`,
-  js: `document.getElementById('hello').addEventListener('click', () => {\n  document.getElementById('out').textContent = 'Hello from the sandbox.'\n})`,
+  files: [
+    {
+      path: 'index.html',
+      language: 'html',
+      content: `<main class="card">\n  <p class="kicker">new canvas</p>\n  <h1>${escapeHtml(name || 'Untitled canvas')}</h1>\n  <p class="lede">Edit the files on the left — the preview reloads as you type.</p>\n  <button id="hello" class="btn">Say hello</button>\n  <output id="out"></output>\n</main>`,
+    },
+    {
+      path: 'styles.css',
+      language: 'css',
+      content: `:root { color-scheme: dark; --accent: #b8f24d; --line: #262b20; --muted: #9aa392; }\n* { box-sizing: border-box; }\nbody { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; background: #0a0b09; color: #eef3e6; font-family: Inter, system-ui, sans-serif; }\n.card { width: min(520px, 100%); padding: 34px; border: 1px solid var(--line); border-radius: 18px; background: #12150f; }\n.kicker { margin: 0 0 10px; color: var(--accent); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; }\nh1 { margin: 0 0 12px; font-family: Georgia, serif; font-size: 34px; font-weight: 400; line-height: 1.05; }\n.lede { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 1.6; }\n.btn { padding: 9px 15px; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent); color: #0b1204; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }\noutput { display: block; margin-top: 14px; color: var(--muted); font-size: 12px; }`,
+    },
+    {
+      path: 'app.js',
+      language: 'js',
+      content: `document.getElementById('hello').addEventListener('click', () => {\n  document.getElementById('out').textContent = 'Hello from the sandbox.'\n})`,
+    },
+  ],
 })
 
 function escapeHtml(value: string): string {
@@ -42,31 +57,9 @@ function escapeHtml(value: string): string {
   })
 }
 
-function buildDoc(input: { html: string; css: string; js: string }): string {
-  const css = input.css.replace(/<\/style/gi, '<\\/style')
-  const js = input.js.replace(/<\/script/gi, '<\\/script')
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Instrument+Serif&display=swap" rel="stylesheet" />
-<style>${css}</style>
-</head>
-<body>
-${input.html}
-<script>${js}</script>
-</body>
-</html>`
-}
-
-const toDraft = (canvas: Canvas): Draft => ({
+const toDraft = (canvas: { name: string; html: string; css: string; js: string; files?: CanvasFile[] }): Draft => ({
   name: canvas.name,
-  html: canvas.html,
-  css: canvas.css,
-  js: canvas.js,
+  files: canvasFiles(canvas),
 })
 
 const slug = (value: string) =>
@@ -79,59 +72,94 @@ export function CanvasPage({ initialId }: { initialId?: string }) {
   const selected = canvases.find((canvas) => canvas.id === selectedId) ?? canvases[0]
   const [draft, setDraft] = useState<Draft>(() => (selected ? toDraft(selected) : blankDraft('')))
   const [tab, setTab] = useState<Tab>('preview')
-  const [preview, setPreview] = useState(() => (selected ? buildDoc(selected) : ''))
+  const [preview, setPreview] = useState(() => (selected ? buildCanvasDoc(selected) : ''))
   const [previewKey, setPreviewKey] = useState(0)
   const [newOpen, setNewOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [newKind, setNewKind] = useState<'blank' | 'landing' | 'dashboard' | 'todo'>('landing')
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [runtimeError, setRuntimeError] = useState<string | null>(null)
   const importRef = useRef<HTMLInputElement>(null)
+  const previewRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!selected) {
-      setDraft(blankDraft(''))
-      return
-    }
+    if (!selected) return
     setDraft(toDraft(selected))
-    setPreview(buildDoc(selected))
+    setPreview(buildCanvasDoc(selected))
     setPreviewKey((key) => key + 1)
-    setTab('preview')
+    setRuntimeError(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected?.id])
+  }, [selected?.id, selected?.updatedAt])
 
+  // Surface canvas script errors instead of a silently blank preview.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { source?: unknown; kind?: unknown; message?: unknown } | null
+      if (!data || typeof data !== 'object' || data.source !== 'mezze-canvas') return
+      if (data.kind === 'log') return
+      setRuntimeError(
+        typeof data.message === 'string' && data.message.trim()
+          ? data.message
+          : 'The canvas script threw an error.',
+      )
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
+
+  // Edits run automatically (debounced), so pasted code is live without a click.
+  useEffect(() => {
+    if (!selected) return
+    const timer = window.setTimeout(() => {
+      setRuntimeError(null)
+      setPreview(buildCanvasDoc({ ...filesToParts(draft.files), files: draft.files }))
+      setPreviewKey((key) => key + 1)
+    }, 500)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.files])
+
+  const savedFiles = selected ? canvasFiles(selected) : []
   const dirty = Boolean(
     selected &&
-      (draft.name !== selected.name ||
-        draft.html !== selected.html ||
-        draft.css !== selected.css ||
-        draft.js !== selected.js),
+      (draft.name !== selected.name || JSON.stringify(draft.files) !== JSON.stringify(savedFiles)),
   )
+  const activeFile =
+    tab === 'preview' ? undefined : draft.files.find((file) => file.path === tab) ?? draft.files[0]
+  const bytes = draft.files.reduce((sum, file) => sum + file.content.length, 0)
 
   const run = () => {
     if (!selected) return
-    store.patchCanvas(selected.id, { ...draft })
-    setPreview(buildDoc(draft))
+    store.patchCanvas(selected.id, {
+      name: draft.name,
+      files: draft.files,
+      ...filesToParts(draft.files),
+    })
+    setRuntimeError(null)
+    setPreview(buildCanvasDoc({ ...filesToParts(draft.files), files: draft.files }))
     setPreviewKey((key) => key + 1)
-    store.notify('Canvas updated · sandbox reloaded')
+    store.notify('Canvas saved · sandbox reloaded')
   }
 
   const create = () => {
     const base =
       newKind === 'blank'
         ? blankDraft(newName)
-        : simulateCanvas(
-            newKind === 'dashboard' ? 'dashboard' : newKind === 'todo' ? 'todo list' : newName || 'landing page',
+        : toDraft(
+            simulateCanvas(
+              newKind === 'dashboard' ? 'dashboard' : newKind === 'todo' ? 'todo list' : newName || 'landing page',
+            ),
           )
+    const parts = filesToParts(base.files)
     const canvas = store.addCanvas({
       name: newName.trim() || base.name,
       description:
         'description' in base && typeof base.description === 'string'
           ? base.description
           : `A ${newKind} canvas`,
-      html: base.html,
-      css: base.css,
-      js: base.js,
+      files: base.files,
+      ...parts,
       origin: 'user',
     })
     setSelectedId(canvas.id)
@@ -147,28 +175,28 @@ export function CanvasPage({ initialId }: { initialId?: string }) {
       const parts = await Promise.all(
         files.map(async (file) => ({ name: file.name, text: await file.text() })),
       )
-      const html = parts.find((part) => /\.html?$/i.test(part.name))
-      const css = parts.find((part) => /\.css$/i.test(part.name))
-      const js = parts.find((part) => /\.js$/i.test(part.name))
-      const svg = parts.find((part) => /\.svg$/i.test(part.name))
-      const text = parts.find((part) => /\.(md|txt|json)$/i.test(part.name))
-      const name = (html?.name ?? parts[0]?.name ?? 'imported').replace(/\.[^.]+$/, '')
-      const body =
-        html?.text ??
-        svg?.text ??
-        (text
-          ? `<main class="card"><pre>${escapeHtml(text.text.slice(0, 120_000))}</pre></main>`
-          : '<main class="card"><h1>Imported canvas</h1></main>')
+      const name = (parts[0]?.name ?? 'imported').replace(/\.[^.]+$/, '')
+      const canvasFilesIn: CanvasFile[] = parts.map((part) => ({
+        path: part.name,
+        language: languageOf(part.name),
+        content: part.text.slice(0, 120_000),
+      }))
+      if (!canvasFilesIn.some((file) => file.language === 'html')) {
+        const source = canvasFilesIn[0]
+        canvasFilesIn.unshift({
+          path: 'index.html',
+          language: 'html',
+          content: `<main class="card"><h1>${escapeHtml(name || 'Imported canvas')}</h1><pre>${escapeHtml(
+            (source?.content ?? '').slice(0, 120_000),
+          )}</pre></main>`,
+        })
+      }
+      const split = filesToParts(canvasFilesIn)
       const canvas = store.addCanvas({
         name: name || 'Imported canvas',
         description: `Imported ${parts.length} file${parts.length === 1 ? '' : 's'}`,
-        html: body,
-        css:
-          css?.text ??
-          (svg
-            ? ''
-            : ':root{color-scheme:dark}body{margin:0;padding:28px;background:#0a0b09;color:#eef3e6;font-family:Inter,system-ui,sans-serif;font-size:14px;line-height:1.7}pre{white-space:pre-wrap;word-break:break-word}'),
-        js: js?.text ?? '',
+        files: canvasFilesIn,
+        ...split,
         origin: 'user',
       })
       setSelectedId(canvas.id)
@@ -180,7 +208,9 @@ export function CanvasPage({ initialId }: { initialId?: string }) {
 
   const download = () => {
     if (!selected) return
-    const blob = new Blob([buildDoc(draft)], { type: 'text/html' })
+    const blob = new Blob([buildCanvasDoc({ ...filesToParts(draft.files), files: draft.files })], {
+      type: 'text/html',
+    })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -205,8 +235,8 @@ export function CanvasPage({ initialId }: { initialId?: string }) {
         <div>
           <h1>Canvas</h1>
           <p>
-            A real sandbox. The agent writes a page, you edit it, and the preview runs in an isolated iframe.
-            Import HTML, CSS or JS to take it further.
+            A real sandbox with multiple files. The agent writes the project, you edit any file, and the preview runs
+            in an isolated iframe. Import HTML, CSS or JS to take it further.
           </p>
         </div>
         <div className="head-actions">
@@ -218,7 +248,7 @@ export function CanvasPage({ initialId }: { initialId?: string }) {
             type="file"
             multiple
             hidden
-            accept=".html,.htm,.css,.js,.json,.svg,.txt,.md"
+            accept=".html,.htm,.css,.js,.json,.svg,.txt,.md,.mjs"
             onChange={(event) => {
               const files = Array.from(event.target.files ?? [])
               void importFiles(files)
@@ -270,7 +300,7 @@ export function CanvasPage({ initialId }: { initialId?: string }) {
                   <span className="canvas-row-copy">
                     <strong>{canvas.name}</strong>
                     <span>
-                      {canvas.origin === 'agent' ? 'agent' : 'you'} ·{' '}
+                      {canvas.origin === 'agent' ? 'agent' : 'you'} · {canvasFiles(canvas).length} files ·{' '}
                       {new Date(canvas.updatedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                     </span>
                   </span>
@@ -296,7 +326,7 @@ export function CanvasPage({ initialId }: { initialId?: string }) {
                     maxLength={64}
                   />
                   <span className={cn('canvas-state', dirty && 'is-dirty')}>
-                    {dirty ? 'unedited run' : 'saved'}
+                    {dirty ? 'unsaved · auto-runs' : 'saved'}
                   </span>
                 </div>
                 <div className="canvas-actions">
@@ -306,41 +336,63 @@ export function CanvasPage({ initialId }: { initialId?: string }) {
                   <button type="button" className="icon-btn" onClick={() => setDeleteOpen(true)} aria-label="Delete canvas">
                     <Trash2 size={13} />
                   </button>
-                  <button type="button" className="btn btn-primary btn-sm" onClick={run} disabled={!dirty}>
+                  <button
+                    type="button"
+                    className="btn btn-quiet btn-sm"
+                    onClick={() => void previewRef.current?.requestFullscreen?.()}
+                    title="Expand the preview"
+                  >
+                    <Maximize2 size={11} /> Expand
+                  </button>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={run} title="Save and reload the preview">
                     <Play size={11} /> Run
                   </button>
                 </div>
               </header>
 
               <div className="canvas-tabs" role="tablist" aria-label="Canvas view">
-                {([
-                  ['preview', 'Preview'],
-                  ['html', 'HTML'],
-                  ['css', 'CSS'],
-                  ['js', 'JS'],
-                ] as const).map(([id, label]) => (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === 'preview'}
+                  className={cn('canvas-tab', tab === 'preview' && 'is-active')}
+                  onClick={() => setTab('preview')}
+                >
+                  Preview
+                </button>
+                {draft.files.map((file) => (
                   <button
-                    key={id}
+                    key={file.path}
                     type="button"
                     role="tab"
-                    aria-selected={tab === id}
-                    className={cn('canvas-tab', tab === id && 'is-active')}
-                    onClick={() => setTab(id)}
+                    aria-selected={tab === file.path}
+                    className={cn('canvas-tab', 'canvas-file-tab', tab === file.path && 'is-active')}
+                    onClick={() => setTab(file.path)}
+                    title={file.path}
                   >
-                    {label}
+                    {file.path}
                   </button>
                 ))}
                 <span className="canvas-tabs-hint">
-                  {dirty ? 'changes not running yet' : 'preview is current'}
+                  {draft.files.length} file{draft.files.length === 1 ? '' : 's'} · {dirty ? 'preview stale' : 'preview current'}
                 </span>
               </div>
 
-              {tab === 'preview' ? (
-                <div className="canvas-preview">
+              {tab === 'preview' || !activeFile ? (
+                <div className="canvas-preview" ref={previewRef}>
+                  {runtimeError ? (
+                    <div className="canvas-error" role="alert">
+                      <CircleAlert size={12} />
+                      <span>{runtimeError}</span>
+                      <button type="button" onClick={() => setRuntimeError(null)} aria-label="Dismiss error">
+                        ✕
+                      </button>
+                    </div>
+                  ) : null}
                   <iframe
                     key={previewKey}
                     title={`${draft.name} preview`}
-                    sandbox="allow-scripts allow-forms allow-modals allow-popups"
+                    sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
                     srcDoc={preview}
                   />
                 </div>
@@ -349,22 +401,25 @@ export function CanvasPage({ initialId }: { initialId?: string }) {
                   className="canvas-code mono"
                   spellCheck={false}
                   wrap="off"
-                  value={tab === 'html' ? draft.html : tab === 'css' ? draft.css : draft.js}
+                  value={activeFile.content}
                   onChange={(event) =>
                     setDraft((prev) => ({
                       ...prev,
-                      [tab]: event.target.value,
+                      files: prev.files.map((file) =>
+                        file.path === activeFile.path ? { ...file, content: event.target.value } : file,
+                      ),
                     }))
                   }
-                  aria-label={`${tab} source`}
+                  aria-label={`${activeFile.path} source`}
                 />
               )}
 
               <footer className="canvas-foot">
                 <span>
-                  <Sparkles size={10} /> Opaque-origin sandbox: no cookies, storage or workspace access.
+                  <Sparkles size={10} /> Edits run automatically · local files are inlined · opaque-origin sandbox: no
+                  cookies, storage or workspace access.
                 </span>
-                <span className="mono">{draft.html.length + draft.css.length + draft.js.length} bytes</span>
+                <span className="mono">{bytes} bytes</span>
               </footer>
             </section>
           ) : null}

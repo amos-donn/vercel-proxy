@@ -2,6 +2,7 @@ import type { D1Database, Env } from './db'
 import { all, one, run } from './db'
 import { ApiError } from './errors'
 import { decryptSecret, encryptSecret, encryptionCustody, maskSecret } from './crypto'
+import { ssePayloads, streamDelta } from './sse'
 import {
   isLiveCatalogProvider,
   liveCatalogProviders,
@@ -468,7 +469,7 @@ export async function jevAnswer(env: Env, userId: string, body: Record<string, u
   const key = await getKey(env, userId, 'typesafe')
   if (!key) throw new ApiError(503, 'provider_not_configured', 'Add a TypeSafe key to use the live System 1 lane.', 'typesafe')
   const base = (typeof env.TYPESAFE_BASE_URL === 'string' ? env.TYPESAFE_BASE_URL : 'https://api.typesafe.ai').replace(/\/$/, '')
-  const upstream = await fetch(`${base}/v1/answer`, {
+  const upstream = await fetchUpstream(`${base}/v1/answer`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -479,7 +480,7 @@ export async function jevAnswer(env: Env, userId: string, body: Record<string, u
       state: body.state ?? {},
       questions: Array.isArray(body.questions) ? body.questions : [],
     }),
-  })
+  }, 'TypeSafe')
   if (!upstream.ok) {
     const detail = (await upstream.text()).slice(0, MAX_RESPONSE_CHARS)
     throw new ApiError(502, 'jev_upstream', `TypeSafe returned ${upstream.status}.`, detail)
@@ -505,7 +506,17 @@ export interface System2Result {
   usage: { promptTokens: number; completionTokens: number; cost: number }
 }
 
-export async function system2(env: Env, userId: string, body: Record<string, unknown>): Promise<System2Result> {
+interface PreparedSystem2 {
+  /** Model id as requested; provider adapters map it to their own name. */
+  model: string
+  provider: ProviderId
+  selectedModel: string
+  key: string
+  messages: Array<{ role: string; content: string }>
+  wantsRaw: boolean
+}
+
+async function prepareSystem2(env: Env, userId: string, body: Record<string, unknown>): Promise<PreparedSystem2> {
   const model =
     typeof body.model === 'string' && body.model.trim()
       ? body.model.trim().slice(0, 160)
@@ -524,7 +535,10 @@ export async function system2(env: Env, userId: string, body: Record<string, unk
       provider,
     )
   }
-  const rawMessages = Array.isArray(body.messages) ? body.messages.slice(-MAX_MESSAGES) : []
+  const incoming = Array.isArray(body.messages) ? body.messages : []
+  // Keep the harness system prompt even when a long agent loop overflows the cap.
+  const rawMessages =
+    incoming.length > MAX_MESSAGES ? [incoming[0], ...incoming.slice(-(MAX_MESSAGES - 1))] : incoming
   const messages = rawMessages
     .filter((message): message is { role: string; content: string } => {
       if (!message || typeof message !== 'object') return false
@@ -534,7 +548,8 @@ export async function system2(env: Env, userId: string, body: Record<string, unk
     .map((message) => ({ role: message.role, content: message.content.slice(0, MAX_MESSAGE_CHARS) }))
   if (!messages.length) throw new ApiError(400, 'empty_messages', 'At least one message is required.')
 
-  const wantsCanvas = body.canvas === true
+  const wantsRaw = body.raw === true
+  const wantsCanvas = body.canvas === true && !wantsRaw
   if (wantsCanvas) {
     messages.push({
       role: 'system',
@@ -543,17 +558,205 @@ export async function system2(env: Env, userId: string, body: Record<string, unk
     })
   }
 
-  const completion = await complete(env, provider, key, model, messages)
+  return { model, provider, selectedModel, key, messages, wantsRaw }
+}
+
+export async function system2(env: Env, userId: string, body: Record<string, unknown>): Promise<System2Result> {
+  const prepared = await prepareSystem2(env, userId, body)
+  const { provider, selectedModel, wantsRaw, messages } = prepared
+
+  const completion = await complete(env, prepared.provider, prepared.key, prepared.model, messages)
+  const usage = {
+    promptTokens: completion.promptTokens,
+    completionTokens: completion.completionTokens,
+    cost: Number((completion.promptTokens * 0.000003 + completion.completionTokens * 0.000015).toFixed(5)),
+  }
+  // Raw mode is for the agent loop: the client parses its own tool-call envelope.
+  if (wantsRaw) {
+    return { plan: [], prose: completion.text, model: selectedModel, provider, usage }
+  }
   const parsed = parseStructured(completion.text)
   return {
     ...parsed,
     model: selectedModel,
     provider,
-    usage: {
-      promptTokens: completion.promptTokens,
-      completionTokens: completion.completionTokens,
-      cost: Number((completion.promptTokens * 0.000003 + completion.completionTokens * 0.000015).toFixed(5)),
+    usage,
+  }
+}
+
+/* ------------------------------------------------------------------ *
+   Streaming lane — the chat shows the model thinking instead of a spinner
+ * ------------------------------------------------------------------ */
+
+export interface System2StreamResult {
+  stream: ReadableStream<Uint8Array>
+  model: string
+  provider: ProviderId
+}
+
+/** A stream can legitimately run longer than one completion. */
+const STREAM_TIMEOUT_MS = 180_000
+
+export async function system2Stream(
+  env: Env,
+  userId: string,
+  body: Record<string, unknown>,
+): Promise<System2StreamResult> {
+  const prepared = await prepareSystem2(env, userId, body)
+  const upstream = await openProviderStream(env, prepared)
+  const reader = upstream.body?.getReader()
+  if (!reader) throw new ApiError(502, 'provider_stream_missing', 'The provider returned no stream body.')
+  const encoder = new TextEncoder()
+  const send = (payload: Record<string, unknown>) => encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const decoder = new TextDecoder()
+      let buffer = ''
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const { payloads, rest } = ssePayloads(buffer)
+          buffer = rest
+          for (const payload of payloads) {
+            let parsed: Record<string, unknown>
+            try {
+              parsed = JSON.parse(payload) as Record<string, unknown>
+            } catch {
+              continue
+            }
+            const delta = streamDelta(prepared.provider, parsed)
+            if (delta) controller.enqueue(send({ type: 'delta', text: delta }))
+          }
+        }
+        controller.enqueue(send({ type: 'done' }))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'The model stream failed.'
+        controller.enqueue(send({ type: 'error', message }))
+      } finally {
+        controller.close()
+      }
     },
+    cancel() {
+      void reader.cancel()
+    },
+  })
+
+  return { stream, model: prepared.selectedModel, provider: prepared.provider }
+}
+
+async function openProviderStream(env: Env, prepared: PreparedSystem2): Promise<Response> {
+  const apiModel = modelForProvider(prepared.provider, prepared.model)
+  const messages = prepared.messages
+
+  if (prepared.provider === 'anthropic') {
+    const system = messages.filter((message) => message.role === 'system').map((message) => message.content).join('\n\n')
+    const conversation = messages
+      .filter((message) => message.role !== 'system')
+      .map((message) => ({ role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content }))
+    return streamFetch(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': prepared.key,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: apiModel,
+          max_tokens: 4096,
+          temperature: 0.2,
+          stream: true,
+          ...(system ? { system } : {}),
+          messages: conversation.length ? conversation : [{ role: 'user', content: 'Continue.' }],
+        }),
+      },
+      'Anthropic',
+    )
+  }
+
+  if (prepared.provider === 'google') {
+    const system = messages.filter((message) => message.role === 'system').map((message) => message.content).join('\n\n')
+    const contents = messages
+      .filter((message) => message.role !== 'system')
+      .map((message) => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }] }))
+    return streamFetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(apiModel)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(prepared.key)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+          contents: contents.length ? contents : [{ role: 'user', parts: [{ text: 'Continue.' }] }],
+          generationConfig: { temperature: 0.2 },
+        }),
+      },
+      'Google',
+    )
+  }
+
+  const base =
+    prepared.provider === 'openrouter'
+      ? 'https://openrouter.ai/api/v1'
+      : prepared.provider === 'groq'
+        ? (typeof env.GROQ_BASE_URL === 'string' && env.GROQ_BASE_URL.trim()
+            ? env.GROQ_BASE_URL
+            : 'https://api.groq.com/openai/v1').replace(/\/$/, '')
+        : (typeof env.OPENAI_BASE_URL === 'string'
+            ? env.OPENAI_BASE_URL
+            : typeof env.SYSTEM2_BASE_URL === 'string'
+              ? env.SYSTEM2_BASE_URL
+              : 'https://api.openai.com/v1').replace(/\/$/, '')
+  const label = prepared.provider === 'openrouter' ? 'OpenRouter' : prepared.provider === 'groq' ? 'Groq' : 'OpenAI'
+  return streamFetch(
+    `${base}/chat/completions`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${prepared.key}`,
+        ...(prepared.provider === 'openrouter'
+          ? { 'HTTP-Referer': 'https://sosystem.amos-donn.workers.dev', 'X-Title': 'Mezze' }
+          : {}),
+      },
+      body: JSON.stringify({ model: apiModel, messages, temperature: 0.2, stream: true }),
+    },
+    label,
+  )
+}
+
+async function streamFetch(url: string, init: RequestInit, label: string): Promise<Response> {
+  let response: Response
+  try {
+    response = await fetch(url, { ...init, signal: AbortSignal.timeout(STREAM_TIMEOUT_MS) })
+  } catch (error) {
+    const name = error instanceof Error ? error.name : ''
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      throw new ApiError(504, 'provider_timeout', `${label} stopped responding while streaming.`)
+    }
+    throw new ApiError(502, 'provider_unreachable', `${label} could not be reached from the Worker.`)
+  }
+  if (!response.ok) {
+    throw upstreamError(label, response.status, (await response.text()).slice(0, MAX_RESPONSE_CHARS))
+  }
+  return response
+}
+
+/** An upstream provider must fail visibly instead of spinning the turn forever. */
+const UPSTREAM_TIMEOUT_MS = 60_000
+
+async function fetchUpstream(url: string, init: RequestInit, label: string): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) })
+  } catch (error) {
+    const name = error instanceof Error ? error.name : ''
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      throw new ApiError(504, 'provider_timeout', `${label} did not respond within ${UPSTREAM_TIMEOUT_MS / 1000}s.`)
+    }
+    throw new ApiError(502, 'provider_unreachable', `${label} could not be reached from the Worker.`)
   }
 }
 
@@ -570,7 +773,7 @@ async function complete(
     const conversation = messages
       .filter((message) => message.role !== 'system')
       .map((message) => ({ role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content }))
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetchUpstream('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -584,7 +787,7 @@ async function complete(
         ...(system ? { system } : {}),
         messages: conversation.length ? conversation : [{ role: 'user', content: 'Continue.' }],
       }),
-    })
+    }, 'Anthropic')
     if (!response.ok) {
       throw upstreamError('Anthropic', response.status, await response.text())
     }
@@ -604,7 +807,7 @@ async function complete(
     const contents = messages
       .filter((message) => message.role !== 'system')
       .map((message) => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: message.content }] }))
-    const response = await fetch(
+    const response = await fetchUpstream(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(apiModel)}:generateContent?key=${encodeURIComponent(key)}`,
       {
         method: 'POST',
@@ -617,6 +820,7 @@ async function complete(
           generationConfig: { temperature: 0.2 },
         }),
       },
+      'Google',
     )
     if (!response.ok) {
       throw upstreamError('Google', response.status, await response.text())
@@ -644,7 +848,7 @@ async function complete(
             : typeof env.SYSTEM2_BASE_URL === 'string'
               ? env.SYSTEM2_BASE_URL
               : 'https://api.openai.com/v1').replace(/\/$/, '')
-  const response = await fetch(`${base}/chat/completions`, {
+  const response = await fetchUpstream(`${base}/chat/completions`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -659,7 +863,7 @@ async function complete(
       temperature: 0.2,
       ...(provider === 'openai' ? { response_format: { type: 'json_object' } } : {}),
     }),
-  })
+  }, provider === 'openrouter' ? 'OpenRouter' : provider === 'groq' ? 'Groq' : 'OpenAI')
   if (!response.ok) {
     const upstream = provider === 'openrouter' ? 'OpenRouter' : provider === 'groq' ? 'Groq' : 'OpenAI'
     throw upstreamError(upstream, response.status, await response.text())

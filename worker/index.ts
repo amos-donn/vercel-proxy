@@ -10,6 +10,7 @@
  *   /api/models      live catalogs for OpenRouter, Google AI Studio and Groq
  *   /api/jev         System 1 proxy
  *   /api/system2     System 2 proxy
+ *   /api/web         agent web search and page reading
  *
  * Provider keys never reach the browser and are only decrypted inside the
  * Worker, immediately before an upstream call.
@@ -28,6 +29,7 @@ import {
   listModels,
   setUserKey,
   system2,
+  system2Stream,
 } from './providers'
 import {
   callMcpTool,
@@ -37,6 +39,7 @@ import {
   refreshServer,
   updateServer,
 } from './mcp'
+import { readPage, webSearch } from './web'
 import { defaultWorkspace } from '../src/data/defaults'
 
 const MAX_SMALL_BODY = 128 * 1024
@@ -304,6 +307,39 @@ export default {
         if (method !== 'POST') throw new ApiError(405, 'method_not_allowed')
         const user = await requireUser(request, env)
         return json(await system2(env, user.id, await readJson(request)))
+      }
+
+      // Token stream for the agent loop: the chat shows the model thinking
+      // instead of a static "working" row for a minute.
+      if (path === '/api/system2/stream') {
+        if (method !== 'POST') throw new ApiError(405, 'method_not_allowed')
+        const user = await requireUser(request, env)
+        const { stream } = await system2Stream(env, user.id, await readJson(request))
+        return new Response(stream, {
+          headers: {
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-cache, no-transform',
+            'x-accel-buffering': 'no',
+          },
+        })
+      }
+
+      if (path === '/api/web') {
+        if (method !== 'POST') throw new ApiError(405, 'method_not_allowed')
+        await requireUser(request, env)
+        const body = await readJson(request)
+        const action = typeof body.action === 'string' ? body.action : ''
+        if (action === 'search') {
+          const query = typeof body.query === 'string' ? body.query.trim().slice(0, 400) : ''
+          if (!query) throw new ApiError(400, 'empty_query', 'A search query is required.')
+          return json({ results: await webSearch(env, query) })
+        }
+        if (action === 'read') {
+          const url = typeof body.url === 'string' ? body.url.trim().slice(0, 2_000) : ''
+          if (!url) throw new ApiError(400, 'empty_url', 'A URL is required.')
+          return json(await readPage(url))
+        }
+        throw new ApiError(400, 'bad_action', 'action must be "search" or "read".')
       }
 
       throw new ApiError(404, 'not_found', 'No such API route.')

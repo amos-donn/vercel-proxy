@@ -24,7 +24,7 @@ export function wantsCanvas(goal: string): boolean {
 
 const sharedCss = `:root { color-scheme: dark; --bg: #0a0b09; --panel: #12150f; --panel-2: #171a13; --line: #262b20; --ink: #eef3e6; --muted: #9aa392; --accent: #b8f24d; --accent-soft: rgba(184, 242, 77, 0.12); }
 * { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; background: radial-gradient(100% 70% at 15% 0, rgba(184, 242, 77, 0.07), transparent 55%), var(--bg); color: var(--ink); font-family: Inter, system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
+body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font-family: Inter, system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
 button, input { font: inherit; }
 h1, h2 { font-family: Georgia, 'Times New Roman', serif; font-weight: 400; letter-spacing: -0.02em; }
 .kicker { margin: 0 0 10px; color: var(--accent); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; }
@@ -89,7 +89,7 @@ h2 { margin: 0; font-size: 16px; }
 .seg button { padding: 4px 10px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 10px; cursor: pointer; }
 .seg button.on { background: var(--accent-soft); color: var(--accent); }
 .chart { display: flex; align-items: flex-end; gap: 5px; height: 170px; padding-top: 8px; }
-.bar { flex: 1; min-width: 3px; border-radius: 3px 3px 0 0; background: linear-gradient(180deg, var(--accent), rgba(184, 242, 77, 0.25)); animation: grow 420ms ease both; }
+.bar { flex: 1; min-width: 3px; border-radius: 3px 3px 0 0; background: var(--accent); animation: grow 420ms ease both; }
 @keyframes grow { from { transform: scaleY(0.2); opacity: 0; } to { transform: scaleY(1); opacity: 1; } }
 .panel:last-child { padding: 16px; }
 .list { margin: 12px 0 0; padding: 0; list-style: none; }

@@ -4,7 +4,6 @@ import { StoreProvider, useStore } from './store'
 import type { View, ViewName } from './types'
 import { cn } from './lib/format'
 import { Rail } from './components/Rail'
-import { Sidebar } from './components/Sidebar'
 import { CommandPalette } from './components/CommandPalette'
 import { AuthScreen, Boot } from './components/AuthScreen'
 import { Home } from './pages/Home'
@@ -60,7 +59,6 @@ function Shell() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [homeToken, setHomeToken] = useState(0)
   const [shortcuts, setShortcuts] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
 
   const navigate = (next: View) => {
     setView(next)
@@ -78,10 +76,6 @@ function Shell() {
         event.preventDefault()
         setView({ name: 'home' })
         setHomeToken((value) => value + 1)
-      }
-      if (meta && event.key === '\\') {
-        event.preventDefault()
-        setSidebarOpen((value) => !value)
       }
       if (meta && event.key === '/') {
         event.preventDefault()
@@ -106,11 +100,9 @@ function Shell() {
         'app',
         settings.compact && 'compact',
         settings.reducedMotion && 'reduce-motion',
-        !sidebarOpen && 'sidebar-hidden',
       )}
     >
-      <Rail view={view} onNavigate={navigate} />
-      <Sidebar
+      <Rail
         view={view}
         onNavigate={navigate}
         onNewChat={() => {
@@ -222,7 +214,6 @@ function Shell() {
             {[
               ['⌘ K', 'Command palette'],
               ['⌘ N', 'New chat'],
-              ['⌘ \\', 'Toggle sidebar'],
               ['⌘ /', 'This sheet'],
               ['/', 'Attach a skill in the composer'],
               ['↵', 'Send · Shift ↵ for a new line'],

@@ -624,6 +624,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       html: draft.html,
       css: draft.css,
       js: draft.js,
+      ...(draft.files?.length ? { files: draft.files } : {}),
       origin: draft.origin ?? 'user',
       updatedAt: Date.now(),
       ...(draft.chatId ? { chatId: draft.chatId } : {}),

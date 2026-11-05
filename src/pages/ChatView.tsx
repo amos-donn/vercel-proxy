@@ -13,6 +13,7 @@ import {
   ExternalLink,
   FileText,
   Frame,
+  ListChecks,
   Loader2,
   MessageSquarePlus,
   Pin,
@@ -26,12 +27,26 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store'
 import { modelLabel } from '../data/providers'
-import type { Chat, ChatMessage, FileDiff, McpToolCall, PlanStep, Skill, View } from '../types'
+import type { ActionStep, Chat, ChatMessage, FileDiff, McpToolCall, PlanStep, Skill, View, WorkspaceFile } from '../types'
 import { cn, money, sleep, splitWords, uid } from '../lib/format'
-import { executeTurn, type TurnEvidence } from '../engine/runtime'
+import { Markdown } from '../lib/markdown'
+import { executeTurn, type TurnEvidence, type TurnHistoryMessage, type TurnWorkspace } from '../engine/runtime'
+import type { AgentContext, AgentToolTrace } from '../engine/agent'
+import { canvasFiles } from '../engine/canvasDoc'
 import { TraceCard } from '../components/TraceCard'
 import { Composer, type ComposerMode } from '../components/Composer'
 import { Chip, Segmented, StatusPill, Tabs } from '../components/ui'
+
+/** Pull the readable part of a half-written JSON envelope for the live bubble. */
+function partialThought(raw: string): string {
+  const match = raw.match(/"thought"\s*:\s*"((?:[^"\\]|\\.)*)/)
+  if (!match) return ''
+  try {
+    return JSON.parse(`"${match[1]}"`) as string
+  } catch {
+    return match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"')
+  }
+}
 
 export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: View) => void }) {
   const store = useStore()
@@ -40,7 +55,24 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
   const [think, setThink] = useState(false)
   const [sideTab, setSideTab] = useState<'overview' | 'plan' | 'artifacts'>('overview')
   const [busy, setBusy] = useState(false)
+  const [activeStep, setActiveStep] = useState<string | null>(null)
+  const [elapsed, setElapsed] = useState(0)
   const alive = useRef(true)
+  // The model streams tokens before it names a tool. Patching one bubble is
+  // cheaper than appending a message per token.
+  const liveThoughtId = useRef<string | null>(null)
+  const liveThoughtAt = useRef(0)
+
+  useEffect(() => {
+    if (!busy) {
+      setElapsed(0)
+      return
+    }
+    const startedAt = Date.now()
+    setElapsed(0)
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000)
+    return () => window.clearInterval(timer)
+  }, [busy])
 
   const agent = store.agents.find((item) => item.id === chat?.agentId)
   const system1Ready = store.providers.some(
@@ -150,6 +182,144 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
         : {}),
     })
 
+    // Continuity: the model sees the earlier turns of this chat, not just the
+    // newest message, so follow-ups keep names, decisions and paths.
+    const history = chat.messages
+      .flatMap<TurnHistoryMessage>((message) => {
+        if (message.kind === 'user') return [{ role: 'user' as const, content: message.text.slice(0, 4000) }]
+        if (message.kind === 'assistant' && message.text.trim()) {
+          return [{ role: 'assistant' as const, content: message.text.slice(0, 4000) }]
+        }
+        return []
+      })
+      .slice(-12)
+
+    // One action log per turn. Every atomic step arrives as a verb-driven
+    // label while it runs, with its details behind a dropdown.
+    const stepsId = uid('m')
+    append({ id: stepsId, kind: 'steps', steps: [] })
+    let stepItems: ActionStep[] = []
+    const onStep = (step: ActionStep) => {
+      const known = stepItems.some((item) => item.id === step.id)
+      stepItems = known
+        ? stepItems.map((item) => (item.id === step.id ? { ...item, ...step } : item))
+        : [...stepItems, step]
+      store.patchMessage(chat.id, stepsId, { steps: stepItems })
+      setActiveStep([...stepItems].reverse().find((item) => item.status === 'running')?.label ?? null)
+    }
+
+    // The agent loop's own surfaces: one tool card per action, a living focus
+    // checklist, and a thought stream between actions.
+    const workspace = buildWorkspaceContext(store.files)
+    const fileIndex = new Map(store.files.map((file) => [file.path, file]))
+    const canvasIndex = new Map(store.canvases.map((canvas) => [canvas.id, canvas]))
+    const planId = uid('m')
+    let planReady = false
+
+    const onTool = (tool: AgentToolTrace) => {
+      if (tool.status === 'running') {
+        append({ id: tool.id, kind: 'tool', name: tool.name, title: tool.title, input: tool.input, status: 'running' })
+        return
+      }
+      store.patchMessage(chat.id, tool.id, {
+        status: tool.status,
+        title: tool.title,
+        output: tool.output,
+        ms: tool.ms,
+        ...(tool.diff ? { diff: tool.diff } : {}),
+      })
+    }
+
+    const onPlan = (steps: PlanStep[]) => {
+      if (!steps.length) return
+      if (planReady) store.patchMessage(chat.id, planId, { steps })
+      else {
+        planReady = true
+        append({ id: planId, kind: 'plan', steps })
+      }
+      store.patchChat(chat.id, { plan: steps })
+    }
+
+    // Live tokens: show the model's own reasoning while it is still writing,
+    // so the turn reads as "thinking" instead of a frozen spinner.
+    const onDelta = (raw: string) => {
+      const thought = partialThought(raw)
+      if (!thought) return
+      if (!liveThoughtId.current) {
+        const id = uid('m')
+        liveThoughtId.current = id
+        liveThoughtAt.current = performance.now()
+        append({ id, kind: 'assistant', at: stamp(), system: 's2', text: thought, thinking: true, streaming: true })
+        return
+      }
+      const now = performance.now()
+      if (now - liveThoughtAt.current < 100) return
+      liveThoughtAt.current = now
+      store.patchMessage(chat.id, liveThoughtId.current, { text: thought })
+    }
+
+    const onThought = (text: string) => {
+      if (liveThoughtId.current) {
+        store.patchMessage(chat.id, liveThoughtId.current, { text, thinking: true, streaming: false })
+        liveThoughtId.current = null
+        return
+      }
+      append({ id: uid('m'), kind: 'assistant', at: stamp(), system: 's2', text, thinking: true })
+    }
+
+    const agentContext: AgentContext = {
+      readFile: (path) =>
+        fileIndex.get(path) ?? store.files.find((file) => file.path.toLowerCase() === path.toLowerCase()),
+      writeFile: (path, text) => {
+        store.writeFile(path, text, 'agent')
+        append({
+          id: uid('m'),
+          kind: 'artifact',
+          name: path.split('/').pop() ?? path,
+          type: 'File',
+          meta: 'written by the agent · open in Files',
+          target: 'files',
+        })
+      },
+      canvases: store.canvases.map((canvas) => ({
+        id: canvas.id,
+        name: canvas.name,
+        files: canvasFiles(canvas),
+      })),
+      createCanvas: (draft) => {
+        const canvas = store.addCanvas({ ...draft, origin: 'agent', chatId: chat.id })
+        canvasIndex.set(canvas.id, canvas)
+        agentContext.canvases.push({ id: canvas.id, name: canvas.name, files: canvasFiles(canvas) })
+        append({
+          id: uid('m'),
+          kind: 'artifact',
+          name: canvas.name,
+          type: 'Canvas',
+          meta: 'agent-built · open, edit and run',
+          target: 'canvas',
+          canvasId: canvas.id,
+        })
+        return { id: canvas.id, name: canvas.name }
+      },
+      updateCanvas: (id, patch) => {
+        const before = canvasIndex.get(id)
+        store.patchCanvas(id, patch)
+        const name = patch.name ?? before?.name ?? 'Canvas'
+        append({
+          id: uid('m'),
+          kind: 'artifact',
+          name,
+          type: 'Canvas',
+          meta: 'updated by the agent · preview reloads',
+          target: 'canvas',
+          canvasId: id,
+        })
+        return { id, name }
+      },
+    }
+
+    const agentHooks = { onStep, onTool, onThought, onDelta, onPlan, context: agentContext }
+
     const evidence: TurnEvidence[] = []
     for (const call of toolCalls) {
       const toolId = uid('m')
@@ -200,6 +370,10 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
         system1Configured: system1Ready,
         skills: skills.map((skill) => ({ name: skill.name, prompt: skill.prompt })),
         evidence,
+        history,
+        workspace,
+        onStep,
+        agent: { hooks: agentHooks },
       })
       if (!alive.current) return
 
@@ -214,7 +388,7 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
         store.patchMessage(chat.id, toolId, { status: 'ok', output: tool.output, ms: tool.ms ?? 620 })
       }
 
-      if (result.plan?.length) {
+      if (result.plan?.length && !planReady) {
         append({ id: uid('m'), kind: 'plan', steps: result.plan })
         store.patchChat(chat.id, { plan: result.plan })
       }
@@ -289,9 +463,18 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
       await stream(result.assistant.text, result.assistant.system)
       store.patchChat(chat.id, { status: 'idle', updated: 'just now' })
     } catch (error) {
-      append({ id: uid('m'), kind: 'notice', text: error instanceof Error ? error.message : 'Turn failed' })
+      const message = error instanceof Error ? error.message : 'Turn failed'
+      if (stepItems.some((step) => step.status === 'running')) {
+        stepItems = stepItems.map((step) =>
+          step.status === 'running' ? { ...step, status: 'error' as const, output: step.output ?? message } : step,
+        )
+        store.patchMessage(chat.id, stepsId, { steps: stepItems })
+      }
+      append({ id: uid('m'), kind: 'notice', text: message })
       store.patchChat(chat.id, { status: 'idle' })
     } finally {
+      liveThoughtId.current = null
+      if (alive.current) setActiveStep(null)
       if (alive.current) setBusy(false)
     }
   }
@@ -445,7 +628,9 @@ export function ChatView({ id, onNavigate }: { id: string; onNavigate: (view: Vi
             ))}
             {chat.status === 'running' && !pendingApproval ? (
               <div className="working">
-                <Loader2 size={13} className="spin" /> working · sandbox attached
+                <Loader2 size={13} className="spin" />
+                {activeStep ?? 'Working'}
+                {elapsed > 1 ? <span className="working-time">{elapsed}s</span> : null}
               </div>
             ) : null}
           </div>
@@ -683,10 +868,16 @@ function MessageView({
           </span>
           <div className="msg-body">
             <div className="msg-byline">
-              {message.system === 's2' ? 'System 2' : 'System 1'} · {message.at}
+              {message.thinking ? 'Thinking' : message.system === 's2' ? 'System 2' : 'System 1'} · {message.at}
               {message.template ? <Chip tone="neutral">template</Chip> : null}
             </div>
-            <RichText text={message.text} />
+            {message.thinking ? (
+              <div className="thought">
+                <Markdown text={message.text} />
+              </div>
+            ) : (
+              <Markdown text={message.text} />
+            )}
             {message.streaming ? <span className="caret" /> : null}
           </div>
         </div>
@@ -710,6 +901,8 @@ function MessageView({
           </ul>
         </div>
       )
+    case 'steps':
+      return <StepsCard message={message} />
     case 'tool':
       return <ToolCard message={message} />
     case 'approval':
@@ -768,20 +961,89 @@ function MessageView({
   }
 }
 
-function RichText({ text }: { text: string }) {
+function StepsCard({ message }: { message: Extract<ChatMessage, { kind: 'steps' }> }) {
+  const [openId, setOpenId] = useState<string | null>(null)
+  const steps = message.steps
+  if (!steps.length) return null
+  const finished = steps.filter((step) => step.status !== 'running').length
+
   return (
-    <>
-      {text.split(/\n\n+/).map((block, index) => (
-        <p key={index} className="rich">
-          {block.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, i) => {
-            if (part.startsWith('`') && part.endsWith('`')) return <code key={i}>{part.slice(1, -1)}</code>
-            if (part.startsWith('**') && part.endsWith('**')) return <strong key={i}>{part.slice(2, -2)}</strong>
-            return <span key={i}>{part}</span>
-          })}
-        </p>
-      ))}
-    </>
+    <div className="steps-card">
+      <header>
+        <ListChecks size={12} />
+        <span>Action log</span>
+        <span className="mono faint">
+          {finished}/{steps.length}
+        </span>
+      </header>
+      <ol>
+        {steps.map((step) => {
+          const expandable = Boolean(step.detail || step.input || step.output)
+          const open = openId === step.id
+          return (
+            <li key={step.id} className={cn('step-row', `is-${step.status}`)}>
+              <button
+                type="button"
+                className="step-head"
+                onClick={() => setOpenId(open ? null : step.id)}
+                aria-expanded={open}
+                disabled={!expandable}
+              >
+                <span className="step-mark">
+                  {step.status === 'running' ? (
+                    <Loader2 size={11} className="spin" />
+                  ) : step.status === 'error' ? (
+                    <CircleAlert size={11} />
+                  ) : (
+                    <CircleCheck size={11} />
+                  )}
+                </span>
+                <span className="step-label">{step.label}</span>
+                <span className="step-ms mono">
+                  {step.status === 'running' ? 'running' : step.ms ? `${(step.ms / 1000).toFixed(2)}s` : ''}
+                </span>
+                {expandable ? open ? <ChevronDown size={11} /> : <ChevronRight size={11} /> : <span className="step-spacer" />}
+              </button>
+              {open && expandable ? (
+                <div className="step-detail">
+                  {step.detail ? <p>{step.detail}</p> : null}
+                  {step.input ? (
+                    <div>
+                      <span className="step-detail-key mono">in</span>
+                      <pre className="mono">{step.input}</pre>
+                    </div>
+                  ) : null}
+                  {step.output ? (
+                    <div>
+                      <span className="step-detail-key mono">out</span>
+                      <pre className="mono">{step.output}</pre>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </li>
+          )
+        })}
+      </ol>
+    </div>
   )
+}
+
+function buildWorkspaceContext(files: WorkspaceFile[]): TurnWorkspace {
+  const roots = [...new Set(files.map((file) => file.path.split('/')[0]).filter(Boolean))].sort()
+  let budget = 18_000
+  const bounded = files.map((file) => {
+    const raw = file.text?.trim() ?? ''
+    if (!raw || budget <= 0) return { path: file.path, bytes: file.bytes }
+    const text = raw.slice(0, Math.min(4_000, budget))
+    budget -= text.length
+    return { path: file.path, bytes: file.bytes, text }
+  })
+  return {
+    files: bounded,
+    totalBytes: files.reduce((sum, file) => sum + file.bytes, 0),
+    roots,
+  }
 }
 
 function ToolCard({ message }: { message: Extract<ChatMessage, { kind: 'tool' }> }) {

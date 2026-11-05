@@ -206,7 +206,7 @@ export function welcomeCanvas(): Canvas {
     css: `:root { color-scheme: dark; --ink: #eef3e6; --muted: #9aa392; --accent: #b8f24d; --panel: #12150f; --line: #262b20; }
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; background: #0a0b09; color: var(--ink); font-family: Inter, system-ui, sans-serif; }
-.card { width: min(520px, 100%); padding: 34px; border: 1px solid var(--line); border-radius: 18px; background: radial-gradient(120% 90% at 100% 0, rgba(184, 242, 77, 0.09), transparent 60%), var(--panel); }
+.card { width: min(520px, 100%); padding: 34px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); }
 .kicker { margin: 0 0 12px; color: var(--accent); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; }
 h1 { margin: 0 0 12px; font-family: Georgia, 'Times New Roman', serif; font-size: 34px; font-weight: 400; line-height: 1.08; letter-spacing: -0.02em; }
 .lede { margin: 0 0 24px; color: var(--muted); font-size: 14px; line-height: 1.65; }
